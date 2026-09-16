@@ -25,6 +25,18 @@
  * misturam: segredo de um lado com verify token do outro é um app que não existe,
  * e a falha é um 401 calado que ninguém liga a configuração. A precedência, o TTL
  * e esse motivo estão escritos em `lib/channels/meta/app.ts`.
+ *
+ * ─── Transporte Datafy (migration 0261) ─────────────────────────────────────
+ *
+ * `session.transport` (`lib/channels/meta/session.ts`) diz se esta sessão fala
+ * direto com a Meta ou por trás do BSP Datafy (`https://app.datafyapi.com.br/docs`,
+ * homologado pela própria Meta, dispensa o app-review). O `POST` usa isso para
+ * escolher QUAL verificação de assinatura rodar — `verifyMetaSignature` (App
+ * Secret da instalação) para `'direct'`, `verifyDatafySignature` (segredo POR
+ * NÚMERO, `channel_sessions.bsp_webhook_secret_encrypted`) para `'datafy'`.
+ * A Datafy documenta a assinatura como OPCIONAL por número: sessão `'datafy'`
+ * sem segredo gravado aceita a entrega sem verificar (registrado em log), em
+ * vez de recusar por uma configuração que na Datafy nunca foi obrigatória.
  */
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
@@ -32,11 +44,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { fail } from "@/lib/api/wrappers";
 import { appDaMeta } from "@/lib/channels/meta/app";
 import { lerEnvelopeMeta } from "@/lib/channels/meta/envelope";
-import { parseMetaWebhook, verificationChallenge, verifyMetaSignature } from "@/lib/channels/meta/webhook";
+import {
+  parseMetaWebhook,
+  verificationChallenge,
+  verifyDatafySignature,
+  verifyMetaSignature,
+} from "@/lib/channels/meta/webhook";
 import { ingestMetaInbound } from "@/lib/channels/meta/ingest";
 import { metaSessionByWebhookToken } from "@/lib/channels/meta/session";
 import { logger } from "@/lib/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { decryptWebhookSecret } from "@/lib/webhooks/secrets";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,6 +68,14 @@ export async function GET(req: NextRequest, ctx: RouteCtx): Promise<NextResponse
   const session = await metaSessionByWebhookToken(token);
   if (!session) return new NextResponse("not found", { status: 404 });
 
+  // ⚠️ Handshake `hub.challenge` — protocolo da META, não confirmado para a
+  // Datafy. Deixado como está de propósito para as duas: a documentação da
+  // Datafy que foi lida para esta fase só descreve entrega POST + cabeçalhos
+  // de assinatura, sem mencionar um GET de verificação equivalente. Antes de
+  // conectar um número de verdade pela Datafy, confira o fluxo de cadastro de
+  // webhook DELES no painel — pode ser que este GET nunca seja chamado para
+  // uma sessão `datafy`, e não há como confirmar isso só pela doc.
+  //
   // Do BANCO (platform_meta_app, migration 0257), com o `.env` como piso: é a
   // credencial da INSTALAÇÃO inteira, não da organização — e um clone que ainda
   // não aplicou a migration continua verificado pelo ambiente. Não lança nunca;
@@ -73,11 +99,55 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   if (!session) return fail("not_found", "unknown webhook token", 404, { requestId });
 
   const rawBody = await req.text();
-  // Do mesmo lugar que o handshake: BANCO primeiro, `.env` como piso (0257). Sem
-  // segredo nenhum configurado a verificação devolve `false` e a entrega morre em
-  // 401 — que é o desfecho de hoje, e não um 500.
-  const { appSecret } = await appDaMeta();
-  if (!verifyMetaSignature(rawBody, req.headers.get("x-hub-signature-256"), appSecret ?? "")) {
+  const admin = createAdminClient();
+
+  // Qual verificação rodar depende do TRANSPORTE desta sessão, não de um
+  // esquema único — ver o cabeçalho do arquivo.
+  let assinaturaValida: boolean;
+  if (session.transport === "datafy") {
+    if (!session.datafySecretEncrypted) {
+      // A Datafy documenta a assinatura como OPCIONAL por número ("ative no
+      // painel, na aba Webhooks do número"). Sessão `datafy` sem segredo
+      // gravado não é configuração quebrada — é a verificação DESLIGADA para
+      // esta entrega, e o log é o que distingue esse estado de "verificação
+      // passou": sem a linha abaixo, os dois casos ficariam indistinguíveis
+      // por quem lê os logs depois de um incidente.
+      logger.warn(
+        "[meta.webhook] sessão datafy sem segredo de assinatura configurado — entrega aceita sem verificação",
+        { request_id: requestId, organization_id: session.organizationId, session_id: session.id },
+      );
+      assinaturaValida = true;
+    } else {
+      const secret = await decryptWebhookSecret(admin, session.datafySecretEncrypted);
+      if (!secret) {
+        // Cifra que não decifra (GUC ausente, chave trocada) é diferente de
+        // "não configurado": aqui HÁ um segredo gravado que deveria valer, e
+        // não conseguir lê-lo é falha de leitura, não ausência — recusa,
+        // como `verifyMetaSignature` recusaria sem o App Secret.
+        logger.warn("[meta.webhook] segredo datafy gravado não decifrou — entrega recusada", {
+          request_id: requestId,
+          organization_id: session.organizationId,
+          session_id: session.id,
+        });
+        assinaturaValida = false;
+      } else {
+        assinaturaValida = verifyDatafySignature(
+          rawBody,
+          req.headers.get("x-datafy-timestamp"),
+          req.headers.get("x-datafy-signature-256"),
+          secret,
+        );
+      }
+    }
+  } else {
+    // Do mesmo lugar que o handshake: BANCO primeiro, `.env` como piso (0257). Sem
+    // segredo nenhum configurado a verificação devolve `false` e a entrega morre em
+    // 401 — que é o desfecho de hoje, e não um 500.
+    const { appSecret } = await appDaMeta();
+    assinaturaValida = verifyMetaSignature(rawBody, req.headers.get("x-hub-signature-256"), appSecret ?? "");
+  }
+
+  if (!assinaturaValida) {
     return fail("unauthorized", "invalid_signature", 401, { requestId });
   }
 
@@ -110,7 +180,8 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   }
 
   const eventos = parseMetaWebhook(leitura.envelope);
-  const admin = createAdminClient();
+  // `admin` já foi criado lá em cima, antes da verificação de assinatura —
+  // reaproveitado aqui, não recriado.
   const now = new Date().toISOString();
   /**
    * Desfecho de cada ingestão. Existe porque a versão anterior fazia

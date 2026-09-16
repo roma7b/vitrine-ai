@@ -219,6 +219,78 @@ const PROVA_PROPRIA: readonly Excecao[] = [
       "da organização viraram venda, e quem o lê é o servidor com o admin client " +
       "filtrando organization_id à mão (a tela `/app/settings/conversoes`).",
   },
+  // ─── As 15 do domínio de varejo móvel (migrations 0262-0269, Fase 1a) ───
+  //
+  // Fora de `TABLES` (rls-isolation.test.ts) de propósito: aquele arquivo
+  // semeia um usuário `agent`, e a cadeia de FK do domínio novo
+  // (produto → variante → unidade → venda → pagamento → …) é grande o
+  // suficiente para merecer seed próprio em vez de inflar o `do $seed$`
+  // genérico de lá — mesma decisão que `channel_routing_policies` e as
+  // demais desta lista já tomaram por razões equivalentes. A prova é real:
+  // `set role authenticated` + `request.jwt.claims` do usuário de cada
+  // organização + contagem cross-org nas 15 tabelas, nos dois sentidos
+  // (linha própria e linha do vizinho), mais o revoke de `anon` conferido
+  // por `information_schema.role_table_grants`.
+  {
+    tabela: "retail_products",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — RETAIL_TABLES, countAs real cross-org.",
+  },
+  {
+    tabela: "retail_product_variants",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_suppliers",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_purchases",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_purchase_items",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_inventory_units",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_inventory_movements",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_sales",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_sale_items",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_payments",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_installments",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_trade_ins",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_trade_in_evaluations",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_repair_orders",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
+  {
+    tabela: "retail_warranties",
+    razao: "tests/invariants/retail-rls-isolation.test.ts — mesmo laço de RETAIL_TABLES.",
+  },
 ];
 
 /**

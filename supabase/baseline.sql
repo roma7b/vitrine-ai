@@ -25041,3 +25041,1075 @@ drop trigger if exists trg_platform_meta_app_updated_at on public.platform_meta_
 create trigger trg_platform_meta_app_updated_at
   before update on public.platform_meta_app
   for each row execute function public.fn_set_updated_at();
+
+-- ---- transporte Datafy do canal oficial (migration 0261) ----
+-- WhatsApp sem app-review da Meta: a Datafy (https://app.datafyapi.com.br/docs)
+-- é um BSP homologado pela própria Meta que espelha a Cloud API 1:1 (mesmo
+-- payload, mesmo endpoint, só troca host e token) — conectar por ela dispensa
+-- o app-review da Meta Business Manager inteiro (Fase 0 do plano de expansão).
+--
+-- Duas colunas nullable em channel_sessions, NÃO uma tabela por instalação
+-- como platform_meta_app (0257): o App Secret da Meta é um só por app e vale
+-- para N WABAs, mas a própria Datafy escopa a assinatura do webhook POR
+-- NÚMERO ("ative no painel, na aba Webhooks do número") — a linha certa é a
+-- mesma tabela que já guarda meta_token_encrypted por sessão (0087).
+--
+-- Nomeadas `bsp_*`, não `meta_*`, apesar de só se aplicarem a linhas
+-- 'meta_cloud': `tests/invariants/channel-provider-schema.test.ts` (0087) tem
+-- uma asserção EXAUSTIVA (`toEqual`) sobre toda coluna `like 'meta\_%'`, e
+-- `tests/invariants/**` é CONGELADO por doutrina (adicione, não edite —
+-- `tests/invariants/README.md`). Uma quarta coluna `meta_*` quebraria aquele
+-- teste sem relação nenhuma com a promessa original da 0087; `bsp_*`
+-- (Business Solution Provider, o termo que a própria Datafy usa) nomeia o
+-- que a coluna é sem colidir com o prefixo que o teste congelado enumera.
+--
+-- `bsp_transport` não entra em channel_sessions_provider_ref_check: não é
+-- provider novo (a constraint decide qual coluna de IDENTIDADE cada provider
+-- exige), é uma variação de TRANSPORTE do provider 'meta_cloud' que já
+-- existe — mesmo adapter, mesmo parser de webhook, mesmo dedup por wamid.
+-- null e 'direct' são o MESMO comportamento de hoje (graphBaseUrl() já
+-- degrada para o host direto da Meta sem a variável de ambiente).
+--
+-- `bsp_webhook_secret_encrypted` cifra pela MESMA RPC que já cifra
+-- meta_token_encrypted (fn_encrypt_oauth/fn_decrypt_oauth, migration 0041) —
+-- nenhuma cifra nova, nenhuma security definer nova em public. NULLABLE
+-- porque a Datafy documenta a assinatura como opcional por número; sessão em
+-- transporte 'datafy' sem segredo é "verificação desligada nesta entrega"
+-- (logado pela rota do webhook), não erro de configuração.
+alter table public.channel_sessions
+  add column if not exists bsp_transport text,
+  add column if not exists bsp_webhook_secret_encrypted bytea;
+
+alter table public.channel_sessions
+  drop constraint if exists channel_sessions_bsp_transport_check;
+
+alter table public.channel_sessions
+  add constraint channel_sessions_bsp_transport_check
+  check (bsp_transport is null or bsp_transport = any (array['direct'::text, 'datafy'::text]));
+
+comment on column public.channel_sessions.bsp_transport is
+  'Como esta sessão meta_cloud fala com a Cloud API: null/''direct'' (hoje — graph.facebook.com direto, comportamento inalterado) ou ''datafy'' (BSP homologado pela Meta, https://app.datafyapi.com.br/docs, que dispensa o app-review da Meta Business Manager). Só se aplica a linhas provider=''meta_cloud''; não entra em channel_sessions_provider_ref_check porque não é um provider novo, é uma variação de transporte do mesmo provider — o adapter, o parser do webhook e o dedup por wamid são idênticos nos dois. Nomeada `bsp_*` e não `meta_*` de propósito: ver o cabeçalho deste bloco.';
+comment on column public.channel_sessions.bsp_webhook_secret_encrypted is
+  'Segredo (whsec_...) que a Datafy gera POR NÚMERO para assinar a entrega do webhook (HMAC-SHA256 de "{timestamp}.{raw_body}", cabeçalhos x-datafy-signature-256/x-datafy-timestamp) — cifrado por fn_encrypt_oauth, mesma cifra de meta_token_encrypted. Vive AQUI e não em platform_meta_app porque a Datafy escopa a assinatura por número ("ative no painel, na aba Webhooks DO NÚMERO"), não por instalação — ao contrário do App Secret da Meta, que é um só para todas as WABAs do app. NULLABLE: a Datafy documenta a assinatura como opcional; sessão em transporte ''datafy'' sem este valor é "verificação desligada para esta entrega", não erro de configuração — a rota do webhook registra isso no log.';
+
+-- ---- Varejo móvel: produtos e variantes (migration 0262) ----
+-- Fase 1a (só schema) do domínio de varejo móvel (MOBILE_RETAIL_DOMAIN.md
+-- §2): 15 tabelas novas, prefixo retail_, distintas de catalog_products
+-- (0204, estoque plano sem IMEI) e nuvemshop_products (espelho remoto).
+-- Nenhuma camada de serviço/Zod/rota/tela/tool de IA nasce nesta fatia —
+-- só schema + RLS + grants (IMPLEMENTATION_PLAN.md, Fase 1). Produto e
+-- variante são tabelas separadas: quem tem preço é o SKU, não o modelo.
+create table if not exists public.retail_products (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  brand text default 'Apple',
+  model_line text,
+  category text,
+  description text,
+  image_url text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists retail_products_org_ativos_idx
+  on public.retail_products (organization_id, active, name);
+
+alter table public.retail_products enable row level security;
+
+drop policy if exists retail_products_select on public.retail_products;
+create policy retail_products_select on public.retail_products
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_products_write on public.retail_products;
+create policy retail_products_write on public.retail_products
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_products from anon;
+grant select, insert, update, delete on public.retail_products to authenticated;
+grant all on public.retail_products to service_role;
+
+drop trigger if exists trg_retail_products_updated_at on public.retail_products;
+create trigger trg_retail_products_updated_at
+  before update on public.retail_products
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_products is
+  'O modelo vendável do domínio de varejo móvel (ex.: "iPhone 15 Pro") — sem preço, que vive na variante/unidade. Distinto de catalog_products (0204): este domínio é serializado por IMEI, aquele é estoque plano. Ver MOBILE_RETAIL_DOMAIN.md §2.';
+comment on column public.retail_products.brand is
+  'Vocabulário aberto (sem CHECK) — trade-in aceita Android, e um clone fora do nicho iPhone vende outras marcas.';
+comment on column public.retail_products.category is
+  'Vocabulário aberto (sem CHECK) — mesma razão de catalog_products.categoria: travar aqui quebraria o update.sh de um clone com categoria própria.';
+
+create table if not exists public.retail_product_variants (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  product_id uuid not null references public.retail_products(id) on delete cascade,
+  sku text not null,
+  storage_gb integer,
+  color text,
+  attributes jsonb not null default '{}'::jsonb,
+  list_price_cents bigint,
+  currency text not null default 'BRL',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_product_variants_preco_nao_negativo
+    check (list_price_cents is null or list_price_cents >= 0),
+  constraint retail_product_variants_moeda_iso
+    check (currency ~ '^[A-Z]{3}$')
+);
+
+create unique index if not exists retail_product_variants_org_sku_key
+  on public.retail_product_variants (organization_id, sku);
+
+create index if not exists retail_product_variants_org_product_idx
+  on public.retail_product_variants (organization_id, product_id);
+
+alter table public.retail_product_variants enable row level security;
+
+drop policy if exists retail_product_variants_select on public.retail_product_variants;
+create policy retail_product_variants_select on public.retail_product_variants
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_product_variants_write on public.retail_product_variants;
+create policy retail_product_variants_write on public.retail_product_variants
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_product_variants from anon;
+grant select, insert, update, delete on public.retail_product_variants to authenticated;
+grant all on public.retail_product_variants to service_role;
+
+drop trigger if exists trg_retail_product_variants_updated_at on public.retail_product_variants;
+create trigger trg_retail_product_variants_updated_at
+  before update on public.retail_product_variants
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_product_variants is
+  'O SKU dentro de um retail_products — o que efetivamente tem preço de tabela. list_price_cents é o preço de UNIDADE NOVA; uma unidade usada específica pode sobrescrever via retail_inventory_units.sale_price_cents.';
+comment on column public.retail_product_variants.sku is
+  'Identidade do SKU dentro da organização — unique (organization_id, sku), mesmo papel de catalog_products.codigo.';
+comment on column public.retail_product_variants.attributes is
+  'Bolsa jsonb para atributo condição-independente que ainda não vale coluna própria (DIRC letra C). storage_gb e color já são colunas porque são filtro/ordenação quente.';
+comment on column public.retail_product_variants.list_price_cents is
+  'Preço de tabela para unidade NOVA/default. Uma retail_inventory_units específica pode ter sale_price_cents próprio.';
+
+-- ---- Varejo móvel: unidades e movimentos de estoque (migration 0263) ----
+-- A tabela CENTRAL do domínio: aparelho físico serializado por IMEI, status
+-- como máquina de estados fechada por CHECK (§3). "Quanto há em estoque" é
+-- SEMPRE count(*) where status='IN_STOCK' — nunca um decremento.
+-- retail_inventory_movements é a trilha append-only por convenção que
+-- responde "por que o estoque diz X". Colunas FK para retail_suppliers,
+-- retail_purchase_items, retail_sales, retail_sale_items, retail_purchases,
+-- retail_trade_ins e retail_repair_orders nascem SEM `references` aqui (essas
+-- tabelas ainda não existem neste ponto do baseline) e são amarradas por
+-- ALTER TABLE nos blocos seguintes, na mesma ordem das migrations 0264-0268.
+create table if not exists public.retail_inventory_units (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  variant_id uuid not null references public.retail_product_variants(id),
+  imei text,
+  imei2 text,
+  serial_number text,
+  condition text,
+  battery_health_pct smallint,
+  cost_cents bigint not null,
+  sale_price_cents bigint,
+  currency text not null default 'BRL',
+  status text not null,
+  is_trade_in_origin boolean not null default false,
+  supplier_id uuid,
+  purchase_item_id uuid,
+  reserved_for_sale_id uuid,
+  reserved_until timestamptz,
+  sold_in_sale_item_id uuid,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_inventory_units_status_check check (
+    status = any (array[
+      'RECEIVING', 'INSPECTION', 'IN_STOCK', 'RESERVED', 'SOLD', 'DELIVERED',
+      'RETURN_PENDING', 'RETURNED', 'REPAIR', 'DAMAGED', 'WARRANTY'
+    ]::text[])
+  ),
+  constraint retail_inventory_units_imei_obrigatorio_apos_recebimento
+    check (status = 'RECEIVING' or imei is not null),
+  constraint retail_inventory_units_cost_nao_negativo check (cost_cents >= 0),
+  constraint retail_inventory_units_sale_price_nao_negativo
+    check (sale_price_cents is null or sale_price_cents >= 0),
+  constraint retail_inventory_units_battery_pct_faixa
+    check (battery_health_pct is null or battery_health_pct between 0 and 100),
+  constraint retail_inventory_units_moeda_iso check (currency ~ '^[A-Z]{3}$')
+);
+
+create unique index if not exists retail_inventory_units_org_imei_key
+  on public.retail_inventory_units (organization_id, imei)
+  where imei is not null;
+
+create unique index if not exists retail_inventory_units_org_imei2_key
+  on public.retail_inventory_units (organization_id, imei2)
+  where imei2 is not null;
+
+create index if not exists retail_inventory_units_org_status_idx
+  on public.retail_inventory_units (organization_id, status);
+
+create index if not exists retail_inventory_units_org_variant_status_idx
+  on public.retail_inventory_units (organization_id, variant_id, status);
+
+alter table public.retail_inventory_units enable row level security;
+
+drop policy if exists retail_inventory_units_select on public.retail_inventory_units;
+create policy retail_inventory_units_select on public.retail_inventory_units
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_inventory_units_write on public.retail_inventory_units;
+create policy retail_inventory_units_write on public.retail_inventory_units
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_inventory_units from anon;
+grant select, insert, update, delete on public.retail_inventory_units to authenticated;
+grant all on public.retail_inventory_units to service_role;
+
+drop trigger if exists trg_retail_inventory_units_updated_at on public.retail_inventory_units;
+create trigger trg_retail_inventory_units_updated_at
+  before update on public.retail_inventory_units
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_inventory_units is
+  'A tabela CENTRAL do domínio de varejo móvel: o aparelho físico serializado por IMEI, com status como máquina de estados (ver CHECK). "Quanto há em estoque" é sempre count(*) where status=''IN_STOCK'' — nunca um decremento. Ver MOBILE_RETAIL_DOMAIN.md §2/§3.';
+comment on column public.retail_inventory_units.imei is
+  'Nullable: unidade em RECEIVING pode não ter IMEI capturado ainda. unique (organization_id, imei) where imei is not null (índice parcial) + CHECK que fecha INSPECTION/além sem IMEI.';
+comment on column public.retail_inventory_units.status is
+  'Máquina de estados fechada por CHECK (MOBILE_RETAIL_DOMAIN.md §3). NÃO inclui TRADED_IN — ver is_trade_in_origin.';
+comment on column public.retail_inventory_units.is_trade_in_origin is
+  'Decisão da Fase 1: TRADED_IN é ORIGEM, não ESTAÇÃO — a unidade trade-in flui RECEIVING → INSPECTION → IN_STOCK → ... como qualquer outra. Um status ''TRADED_IN'' mutuamente exclusivo bloquearia esse fluxo.';
+comment on column public.retail_inventory_units.cost_cents is
+  'NOT NULL, ao contrário de catalog_products.custo_cents: custo-base POR UNIDADE viabiliza margem-por-aparelho e ponto de equilíbrio de trade-in.';
+comment on column public.retail_inventory_units.supplier_id is
+  'FK para retail_suppliers, amarrada em ALTER no bloco da migration 0264 (a tabela referenciada nasce lá).';
+comment on column public.retail_inventory_units.purchase_item_id is
+  'FK para retail_purchase_items, amarrada em ALTER no bloco da migration 0264.';
+comment on column public.retail_inventory_units.reserved_for_sale_id is
+  'FK para retail_sales, amarrada em ALTER no bloco da migration 0265.';
+comment on column public.retail_inventory_units.sold_in_sale_item_id is
+  'FK para retail_sale_items, amarrada em ALTER no bloco da migration 0265.';
+
+create table if not exists public.retail_inventory_movements (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  unit_id uuid not null references public.retail_inventory_units(id),
+  from_status text,
+  to_status text not null,
+  reason text not null,
+  actor_user_id uuid references auth.users(id),
+  actor_type text,
+  related_sale_id uuid,
+  related_purchase_id uuid,
+  related_repair_order_id uuid,
+  related_trade_in_id uuid,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_inventory_movements_actor_type_check check (
+    actor_type is null or actor_type = any (array['human', 'ai_agent', 'system']::text[])
+  )
+);
+
+create index if not exists retail_inventory_movements_org_unit_idx
+  on public.retail_inventory_movements (organization_id, unit_id, created_at desc);
+
+alter table public.retail_inventory_movements enable row level security;
+
+drop policy if exists retail_inventory_movements_select on public.retail_inventory_movements;
+create policy retail_inventory_movements_select on public.retail_inventory_movements
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_inventory_movements_write on public.retail_inventory_movements;
+create policy retail_inventory_movements_write on public.retail_inventory_movements
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_inventory_movements from anon;
+grant select, insert, update, delete on public.retail_inventory_movements to authenticated;
+grant all on public.retail_inventory_movements to service_role;
+
+drop trigger if exists trg_retail_inventory_movements_updated_at on public.retail_inventory_movements;
+create trigger trg_retail_inventory_movements_updated_at
+  before update on public.retail_inventory_movements
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_inventory_movements is
+  'Trilha de auditoria da máquina de estados de retail_inventory_units — append-only POR CONVENÇÃO (Fase 1 exige que só lib/retail/movimentos.ts escreva aqui). "Por que o estoque diz X" sempre tem resposta aqui.';
+comment on column public.retail_inventory_movements.from_status is
+  'NULL na linha de NASCIMENTO da unidade (recebimento inicial).';
+comment on column public.retail_inventory_movements.reason is
+  'Vocabulário ABERTO (sem CHECK) — ex.: received, inspected, sold, delivered, returned, sent_to_repair, returned_from_repair, traded_in, damaged, warranty_claim, adjustment.';
+comment on column public.retail_inventory_movements.metadata is
+  'Snapshot IMUTÁVEL do momento da transição — preço para relatório de margem, checklist de inspeção, fotos de dano.';
+
+-- ---- Varejo móvel: fornecedores, compras e itens de compra (migration 0264) ----
+-- Amarra as FKs que o bloco anterior deixou soltas (supplier_id,
+-- purchase_item_id em retail_inventory_units; related_purchase_id em
+-- retail_inventory_movements). retail_purchase_items NÃO cria unidade
+-- sozinha: isso é rota de API (Fase 1, fora desta fatia só-schema).
+create table if not exists public.retail_suppliers (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  document text,
+  contact_phone text,
+  contact_email text,
+  notes text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists retail_suppliers_org_ativos_idx
+  on public.retail_suppliers (organization_id, active, name);
+
+alter table public.retail_suppliers enable row level security;
+
+drop policy if exists retail_suppliers_select on public.retail_suppliers;
+create policy retail_suppliers_select on public.retail_suppliers
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_suppliers_write on public.retail_suppliers;
+create policy retail_suppliers_write on public.retail_suppliers
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_suppliers from anon;
+grant select, insert, update, delete on public.retail_suppliers to authenticated;
+grant all on public.retail_suppliers to service_role;
+
+drop trigger if exists trg_retail_suppliers_updated_at on public.retail_suppliers;
+create trigger trg_retail_suppliers_updated_at
+  before update on public.retail_suppliers
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_suppliers is
+  'Quem vende aparelho/peça pra loja. Documento (CNPJ/CPF) é texto livre — validação vive no Zod da camada de serviço.';
+
+create table if not exists public.retail_purchases (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  supplier_id uuid references public.retail_suppliers(id),
+  purchase_date date,
+  invoice_number text,
+  total_cost_cents bigint,
+  currency text not null default 'BRL',
+  status text not null default 'draft',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_purchases_status_check
+    check (status = any (array['draft', 'received', 'cancelled']::text[])),
+  constraint retail_purchases_total_nao_negativo
+    check (total_cost_cents is null or total_cost_cents >= 0),
+  constraint retail_purchases_moeda_iso check (currency ~ '^[A-Z]{3}$')
+);
+
+create index if not exists retail_purchases_org_status_idx
+  on public.retail_purchases (organization_id, status);
+
+alter table public.retail_purchases enable row level security;
+
+drop policy if exists retail_purchases_select on public.retail_purchases;
+create policy retail_purchases_select on public.retail_purchases
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_purchases_write on public.retail_purchases;
+create policy retail_purchases_write on public.retail_purchases
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_purchases from anon;
+grant select, insert, update, delete on public.retail_purchases to authenticated;
+grant all on public.retail_purchases to service_role;
+
+drop trigger if exists trg_retail_purchases_updated_at on public.retail_purchases;
+create trigger trg_retail_purchases_updated_at
+  before update on public.retail_purchases
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_purchases is
+  'O pedido de compra de fornecedor. "received" é o status que a rota de API (Fase 1) usa como gatilho para spawnar retail_inventory_units a partir dos itens.';
+
+create table if not exists public.retail_purchase_items (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  purchase_id uuid not null references public.retail_purchases(id) on delete cascade,
+  variant_id uuid not null references public.retail_product_variants(id),
+  quantity integer not null,
+  unit_cost_cents bigint not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_purchase_items_quantity_positiva check (quantity > 0),
+  constraint retail_purchase_items_custo_nao_negativo check (unit_cost_cents >= 0)
+);
+
+create index if not exists retail_purchase_items_org_purchase_idx
+  on public.retail_purchase_items (organization_id, purchase_id);
+
+alter table public.retail_purchase_items enable row level security;
+
+drop policy if exists retail_purchase_items_select on public.retail_purchase_items;
+create policy retail_purchase_items_select on public.retail_purchase_items
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_purchase_items_write on public.retail_purchase_items;
+create policy retail_purchase_items_write on public.retail_purchase_items
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_purchase_items from anon;
+grant select, insert, update, delete on public.retail_purchase_items to authenticated;
+grant all on public.retail_purchase_items to service_role;
+
+drop trigger if exists trg_retail_purchase_items_updated_at on public.retail_purchase_items;
+create trigger trg_retail_purchase_items_updated_at
+  before update on public.retail_purchase_items
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_purchase_items is
+  '"Compramos N deste SKU" — cada uma das N unidades vira sua própria retail_inventory_units (status RECEIVING) só no recebimento físico. Esta tabela NÃO cria unidade sozinha.';
+
+alter table public.retail_inventory_units
+  drop constraint if exists retail_inventory_units_supplier_id_fkey;
+alter table public.retail_inventory_units
+  add constraint retail_inventory_units_supplier_id_fkey
+  foreign key (supplier_id) references public.retail_suppliers(id);
+
+alter table public.retail_inventory_units
+  drop constraint if exists retail_inventory_units_purchase_item_id_fkey;
+alter table public.retail_inventory_units
+  add constraint retail_inventory_units_purchase_item_id_fkey
+  foreign key (purchase_item_id) references public.retail_purchase_items(id);
+
+alter table public.retail_inventory_movements
+  drop constraint if exists retail_inventory_movements_related_purchase_id_fkey;
+alter table public.retail_inventory_movements
+  add constraint retail_inventory_movements_related_purchase_id_fkey
+  foreign key (related_purchase_id) references public.retail_purchases(id);
+
+-- ---- Varejo móvel: vendas e itens de venda (migration 0265) ----
+-- Piso de escrita `agent`+ na TABELA (front-desk abre rascunho) — a régua
+-- fina "só quem move dinheiro completa a venda" (§5) chega na Fase 2 como
+-- fn_retail_complete_sale (security definer), não como policy aqui: RLS não
+-- enxerga "qual campo mudou" dentro de um UPDATE, só a linha.
+create table if not exists public.retail_sales (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  contact_id uuid references public.contacts(id),
+  crm_lead_id uuid references public.crm_leads(id),
+  sold_by_user_id uuid references auth.users(id),
+  channel text,
+  status text not null default 'draft',
+  subtotal_cents bigint not null default 0,
+  discount_cents bigint not null default 0,
+  total_cents bigint not null default 0,
+  currency text not null default 'BRL',
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_sales_status_check check (
+    status = any (array[
+      'draft', 'awaiting_payment', 'paid', 'completed', 'cancelled', 'refunded'
+    ]::text[])
+  ),
+  constraint retail_sales_subtotal_nao_negativo check (subtotal_cents >= 0),
+  constraint retail_sales_discount_nao_negativo check (discount_cents >= 0),
+  constraint retail_sales_total_nao_negativo check (total_cents >= 0),
+  constraint retail_sales_moeda_iso check (currency ~ '^[A-Z]{3}$')
+);
+
+create index if not exists retail_sales_org_status_idx
+  on public.retail_sales (organization_id, status);
+
+create index if not exists retail_sales_org_contact_idx
+  on public.retail_sales (organization_id, contact_id);
+
+alter table public.retail_sales enable row level security;
+
+drop policy if exists retail_sales_select on public.retail_sales;
+create policy retail_sales_select on public.retail_sales
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_sales_write on public.retail_sales;
+create policy retail_sales_write on public.retail_sales
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_sales from anon;
+grant select, insert, update, delete on public.retail_sales to authenticated;
+grant all on public.retail_sales to service_role;
+
+drop trigger if exists trg_retail_sales_updated_at on public.retail_sales;
+create trigger trg_retail_sales_updated_at
+  before update on public.retail_sales
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_sales is
+  'A venda de balcão/POS. Piso de escrita da TABELA é agent+; a régua "só quem move dinheiro completa a venda" (§5) chega na Fase 2 como fn_retail_complete_sale, não como policy nesta migration.';
+comment on column public.retail_sales.crm_lead_id is
+  'FK simples e nullable para crm_leads — venda de balcão avulsa pode não ter lead. Ligação polimórfica via crm_lead_links, se usada, é responsabilidade de aplicação.';
+
+create table if not exists public.retail_sale_items (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  sale_id uuid not null references public.retail_sales(id) on delete cascade,
+  inventory_unit_id uuid references public.retail_inventory_units(id),
+  catalog_product_id uuid references public.catalog_products(id),
+  description text not null,
+  unit_price_cents bigint not null,
+  quantity integer not null default 1,
+  line_total_cents bigint not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_sale_items_exatamente_um_produto
+    check (num_nonnulls(inventory_unit_id, catalog_product_id) = 1),
+  constraint retail_sale_items_quantidade_unitaria_se_serializado
+    check (inventory_unit_id is null or quantity = 1),
+  constraint retail_sale_items_quantity_positiva check (quantity > 0),
+  constraint retail_sale_items_preco_nao_negativo check (unit_price_cents >= 0),
+  constraint retail_sale_items_total_nao_negativo check (line_total_cents >= 0)
+);
+
+create index if not exists retail_sale_items_org_sale_idx
+  on public.retail_sale_items (organization_id, sale_id);
+
+create index if not exists retail_sale_items_org_inventory_unit_idx
+  on public.retail_sale_items (organization_id, inventory_unit_id)
+  where inventory_unit_id is not null;
+
+alter table public.retail_sale_items enable row level security;
+
+drop policy if exists retail_sale_items_select on public.retail_sale_items;
+create policy retail_sale_items_select on public.retail_sale_items
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_sale_items_write on public.retail_sale_items;
+create policy retail_sale_items_write on public.retail_sale_items
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_sale_items from anon;
+grant select, insert, update, delete on public.retail_sale_items to authenticated;
+grant all on public.retail_sale_items to service_role;
+
+drop trigger if exists trg_retail_sale_items_updated_at on public.retail_sale_items;
+create trigger trg_retail_sale_items_updated_at
+  before update on public.retail_sale_items
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_sale_items is
+  'Uma linha da venda: OU um aparelho serializado (inventory_unit_id) OU um item de catalog_products (catalog_product_id) — nunca os dois, nunca nenhum (num_nonnulls = 1). description é snapshot imutável do que foi vendido.';
+comment on column public.retail_sale_items.quantity is
+  'Sempre 1 quando inventory_unit_id está setado — um IMEI não é "quantidade 3".';
+
+alter table public.retail_inventory_units
+  drop constraint if exists retail_inventory_units_reserved_for_sale_id_fkey;
+alter table public.retail_inventory_units
+  add constraint retail_inventory_units_reserved_for_sale_id_fkey
+  foreign key (reserved_for_sale_id) references public.retail_sales(id);
+
+alter table public.retail_inventory_units
+  drop constraint if exists retail_inventory_units_sold_in_sale_item_id_fkey;
+alter table public.retail_inventory_units
+  add constraint retail_inventory_units_sold_in_sale_item_id_fkey
+  foreign key (sold_in_sale_item_id) references public.retail_sale_items(id);
+
+alter table public.retail_inventory_movements
+  drop constraint if exists retail_inventory_movements_related_sale_id_fkey;
+alter table public.retail_inventory_movements
+  add constraint retail_inventory_movements_related_sale_id_fkey
+  foreign key (related_sale_id) references public.retail_sales(id);
+
+-- ---- Varejo móvel: pagamentos e parcelas (migration 0266) ----
+-- retail_installments modela crediário FINANCIADO PELA LOJA, distinto de
+-- parcelamento de cartão (um único retail_payments com method='credit').
+create table if not exists public.retail_payments (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  sale_id uuid not null references public.retail_sales(id) on delete cascade,
+  method text,
+  amount_cents bigint not null,
+  currency text not null default 'BRL',
+  status text not null default 'pending',
+  external_reference text,
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_payments_status_check
+    check (status = any (array['pending', 'confirmed', 'failed', 'refunded']::text[])),
+  constraint retail_payments_amount_nao_negativo check (amount_cents >= 0),
+  constraint retail_payments_moeda_iso check (currency ~ '^[A-Z]{3}$')
+);
+
+create index if not exists retail_payments_org_sale_idx
+  on public.retail_payments (organization_id, sale_id);
+
+alter table public.retail_payments enable row level security;
+
+drop policy if exists retail_payments_select on public.retail_payments;
+create policy retail_payments_select on public.retail_payments
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_payments_write on public.retail_payments;
+create policy retail_payments_write on public.retail_payments
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_payments from anon;
+grant select, insert, update, delete on public.retail_payments to authenticated;
+grant all on public.retail_payments to service_role;
+
+drop trigger if exists trg_retail_payments_updated_at on public.retail_payments;
+create trigger trg_retail_payments_updated_at
+  before update on public.retail_payments
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_payments is
+  'Um pagamento contra uma venda. method é vocabulário aberto; status é fechado (ciclo de vida curto e estável).';
+
+create table if not exists public.retail_installments (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  payment_id uuid not null references public.retail_payments(id) on delete cascade,
+  installment_number smallint not null,
+  due_date date not null,
+  amount_cents bigint not null,
+  status text not null default 'pending',
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_installments_status_check
+    check (status = any (array['pending', 'paid', 'overdue']::text[])),
+  constraint retail_installments_numero_positivo check (installment_number > 0),
+  constraint retail_installments_amount_nao_negativo check (amount_cents >= 0)
+);
+
+create unique index if not exists retail_installments_org_payment_numero_key
+  on public.retail_installments (organization_id, payment_id, installment_number);
+
+create index if not exists retail_installments_org_status_due_idx
+  on public.retail_installments (organization_id, status, due_date);
+
+alter table public.retail_installments enable row level security;
+
+drop policy if exists retail_installments_select on public.retail_installments;
+create policy retail_installments_select on public.retail_installments
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_installments_write on public.retail_installments;
+create policy retail_installments_write on public.retail_installments
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_installments from anon;
+grant select, insert, update, delete on public.retail_installments to authenticated;
+grant all on public.retail_installments to service_role;
+
+drop trigger if exists trg_retail_installments_updated_at on public.retail_installments;
+create trigger trg_retail_installments_updated_at
+  before update on public.retail_installments
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_installments is
+  'Crediário FINANCIADO PELA LOJA — distinto de parcelamento de operadora de cartão. unique (organization_id, payment_id, installment_number) evita duas parcelas com o mesmo número.';
+
+-- ---- Varejo móvel: trocas e avaliações (migration 0267) ----
+-- retail_trade_in_evaluations guarda MÚLTIPLAS linhas por trade-in de
+-- propósito: estimativa da IA e reavaliação presencial não se sobrescrevem.
+create table if not exists public.retail_trade_ins (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  contact_id uuid references public.contacts(id),
+  crm_lead_id uuid references public.crm_leads(id),
+  status text not null default 'requested',
+  resulting_sale_id uuid references public.retail_sales(id),
+  resulting_inventory_unit_id uuid references public.retail_inventory_units(id),
+  offer_amount_cents bigint,
+  offer_expires_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_trade_ins_status_check check (
+    status = any (array[
+      'requested', 'evaluating', 'offered', 'accepted', 'declined', 'completed', 'expired'
+    ]::text[])
+  ),
+  constraint retail_trade_ins_offer_nao_negativa
+    check (offer_amount_cents is null or offer_amount_cents >= 0)
+);
+
+create index if not exists retail_trade_ins_org_status_idx
+  on public.retail_trade_ins (organization_id, status);
+
+create index if not exists retail_trade_ins_org_contact_idx
+  on public.retail_trade_ins (organization_id, contact_id);
+
+alter table public.retail_trade_ins enable row level security;
+
+drop policy if exists retail_trade_ins_select on public.retail_trade_ins;
+create policy retail_trade_ins_select on public.retail_trade_ins
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_trade_ins_write on public.retail_trade_ins;
+create policy retail_trade_ins_write on public.retail_trade_ins
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_trade_ins from anon;
+grant select, insert, update, delete on public.retail_trade_ins to authenticated;
+grant all on public.retail_trade_ins to service_role;
+
+drop trigger if exists trg_retail_trade_ins_updated_at on public.retail_trade_ins;
+create trigger trg_retail_trade_ins_updated_at
+  before update on public.retail_trade_ins
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_trade_ins is
+  'O pedido de troca de aparelho usado por crédito/desconto. resulting_inventory_unit_id + is_trade_in_origin (em retail_inventory_units) registram a origem trade-in sem um status TRADED_IN mutuamente exclusivo.';
+
+create table if not exists public.retail_trade_in_evaluations (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  trade_in_id uuid not null references public.retail_trade_ins(id) on delete cascade,
+  device_description text,
+  claimed_model text,
+  claimed_condition text,
+  claimed_battery_health_pct smallint,
+  verified_model text,
+  verified_condition text,
+  verified_battery_health_pct smallint,
+  evaluated_by_user_id uuid references auth.users(id),
+  evaluation_method text,
+  calculated_offer_cents bigint,
+  evaluation_notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_trade_in_evaluations_method_check check (
+    evaluation_method is null
+    or evaluation_method = any (array['ai_estimate', 'in_person', 'remote_photos']::text[])
+  ),
+  constraint retail_trade_in_evaluations_claimed_battery_faixa
+    check (claimed_battery_health_pct is null or claimed_battery_health_pct between 0 and 100),
+  constraint retail_trade_in_evaluations_verified_battery_faixa
+    check (verified_battery_health_pct is null or verified_battery_health_pct between 0 and 100),
+  constraint retail_trade_in_evaluations_offer_nao_negativa
+    check (calculated_offer_cents is null or calculated_offer_cents >= 0)
+);
+
+create index if not exists retail_trade_in_evaluations_org_trade_in_idx
+  on public.retail_trade_in_evaluations (organization_id, trade_in_id, created_at);
+
+alter table public.retail_trade_in_evaluations enable row level security;
+
+drop policy if exists retail_trade_in_evaluations_select on public.retail_trade_in_evaluations;
+create policy retail_trade_in_evaluations_select on public.retail_trade_in_evaluations
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_trade_in_evaluations_write on public.retail_trade_in_evaluations;
+create policy retail_trade_in_evaluations_write on public.retail_trade_in_evaluations
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_trade_in_evaluations from anon;
+grant select, insert, update, delete on public.retail_trade_in_evaluations to authenticated;
+grant all on public.retail_trade_in_evaluations to service_role;
+
+drop trigger if exists trg_retail_trade_in_evaluations_updated_at on public.retail_trade_in_evaluations;
+create trigger trg_retail_trade_in_evaluations_updated_at
+  before update on public.retail_trade_in_evaluations
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_trade_in_evaluations is
+  'UMA OU MAIS linhas por trade-in, de propósito — uma estimativa da IA e uma reavaliação presencial NÃO se sobrescrevem: os dois números ficam visíveis se divergirem.';
+comment on column public.retail_trade_in_evaluations.evaluation_method is
+  'ai_estimate | in_person | remote_photos — fechado por CHECK: cada valor tem implicação de confiança diferente.';
+
+alter table public.retail_inventory_movements
+  drop constraint if exists retail_inventory_movements_related_trade_in_id_fkey;
+alter table public.retail_inventory_movements
+  add constraint retail_inventory_movements_related_trade_in_id_fkey
+  foreign key (related_trade_in_id) references public.retail_trade_ins(id);
+
+-- ---- Varejo móvel: ordens de reparo (migration 0268) ----
+-- inventory_unit_id nullable e comum: consertar aparelho do CLIENTE (não
+-- estoque da loja) é a operação mais frequente. imei aqui é só auxílio de
+-- busca, sem unique — a identidade de unidade serializada da loja continua
+-- em retail_inventory_units.imei.
+create table if not exists public.retail_repair_orders (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  contact_id uuid references public.contacts(id),
+  crm_lead_id uuid references public.crm_leads(id),
+  inventory_unit_id uuid references public.retail_inventory_units(id),
+  device_description text,
+  imei text,
+  issue_description text,
+  diagnosis text,
+  status text not null default 'received',
+  quoted_cost_cents bigint,
+  final_cost_cents bigint,
+  technician_user_id uuid references auth.users(id),
+  received_at timestamptz,
+  promised_at timestamptz,
+  completed_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_repair_orders_status_check check (
+    status = any (array[
+      'received', 'diagnosing', 'awaiting_approval', 'awaiting_parts',
+      'in_repair', 'ready', 'delivered', 'cancelled'
+    ]::text[])
+  ),
+  constraint retail_repair_orders_quoted_nao_negativo
+    check (quoted_cost_cents is null or quoted_cost_cents >= 0),
+  constraint retail_repair_orders_final_nao_negativo
+    check (final_cost_cents is null or final_cost_cents >= 0)
+);
+
+create index if not exists retail_repair_orders_org_status_idx
+  on public.retail_repair_orders (organization_id, status);
+
+create index if not exists retail_repair_orders_org_contact_idx
+  on public.retail_repair_orders (organization_id, contact_id);
+
+alter table public.retail_repair_orders enable row level security;
+
+drop policy if exists retail_repair_orders_select on public.retail_repair_orders;
+create policy retail_repair_orders_select on public.retail_repair_orders
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_repair_orders_write on public.retail_repair_orders;
+create policy retail_repair_orders_write on public.retail_repair_orders
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'agent'))
+  );
+
+revoke all on public.retail_repair_orders from anon;
+grant select, insert, update, delete on public.retail_repair_orders to authenticated;
+grant all on public.retail_repair_orders to service_role;
+
+drop trigger if exists trg_retail_repair_orders_updated_at on public.retail_repair_orders;
+create trigger trg_retail_repair_orders_updated_at
+  before update on public.retail_repair_orders
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_repair_orders is
+  'Ordem de reparo. inventory_unit_id NULL é o caso comum (aparelho do CLIENTE); só setado para reforma de unidade PRÓPRIA. imei é auxílio de busca, sem unique.';
+
+alter table public.retail_inventory_movements
+  drop constraint if exists retail_inventory_movements_related_repair_order_id_fkey;
+alter table public.retail_inventory_movements
+  add constraint retail_inventory_movements_related_repair_order_id_fkey
+  foreign key (related_repair_order_id) references public.retail_repair_orders(id);
+
+-- ---- Varejo móvel: garantias (migration 0269) ----
+-- Última das 15 tabelas de MOBILE_RETAIL_DOMAIN.md §2 (Fase 1a). Mesmo
+-- either/or de retail_sale_items: cobre uma unidade OU uma ordem de reparo.
+create table if not exists public.retail_warranties (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  inventory_unit_id uuid references public.retail_inventory_units(id),
+  repair_order_id uuid references public.retail_repair_orders(id),
+  sale_item_id uuid references public.retail_sale_items(id),
+  contact_id uuid references public.contacts(id),
+  warranty_type text not null,
+  starts_at date not null,
+  expires_at date not null,
+  terms text,
+  status text not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint retail_warranties_exatamente_um_alvo
+    check (num_nonnulls(inventory_unit_id, repair_order_id) = 1),
+  constraint retail_warranties_type_check
+    check (warranty_type = any (array['manufacturer', 'store', 'extended']::text[])),
+  constraint retail_warranties_status_check
+    check (status = any (array['active', 'expired', 'voided', 'claimed']::text[])),
+  constraint retail_warranties_vigencia_valida check (expires_at >= starts_at)
+);
+
+create index if not exists retail_warranties_org_status_idx
+  on public.retail_warranties (organization_id, status);
+
+create index if not exists retail_warranties_org_contact_idx
+  on public.retail_warranties (organization_id, contact_id);
+
+alter table public.retail_warranties enable row level security;
+
+drop policy if exists retail_warranties_select on public.retail_warranties;
+create policy retail_warranties_select on public.retail_warranties
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+
+drop policy if exists retail_warranties_write on public.retail_warranties;
+create policy retail_warranties_write on public.retail_warranties
+  using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+
+revoke all on public.retail_warranties from anon;
+grant select, insert, update, delete on public.retail_warranties to authenticated;
+grant all on public.retail_warranties to service_role;
+
+drop trigger if exists trg_retail_warranties_updated_at on public.retail_warranties;
+create trigger trg_retail_warranties_updated_at
+  before update on public.retail_warranties
+  for each row execute function public.fn_set_updated_at();
+
+comment on table public.retail_warranties is
+  'Garantia sobre um aparelho de estoque OU sobre uma ordem de reparo — nunca as duas, nunca nenhuma (num_nonnulls = 1, mesma disciplina de retail_sale_items). Última das 15 tabelas de MOBILE_RETAIL_DOMAIN.md §2 (Fase 1a).';

@@ -73,6 +73,16 @@ const DIVIDA_LGPD_CONHECIDA: Record<string, string> = {
     "captured_name, captured_email e captured_phone — o payload cru de captação. " +
     "A própria migration 0174 escreveu que 'o cascade de anonimização precisa alcançar esta tabela' " +
     "e o passo nunca foi acrescentado. Sai quando for.",
+  retail_sales:
+    "Migration 0265 (domínio de varejo móvel, Fase 1a — MOBILE_RETAIL_DOMAIN.md §2). " +
+    "Guarda `notes` — texto livre do balcão sobre a venda, que na prática pode " +
+    "nomear ou descrever a pessoa do contato ('cliente pediu para embrulhar de " +
+    "presente para a mãe'). Fase 1a é explicitamente schema-only (sem lib/retail/, " +
+    "sem rota, sem escrita de aplicação ainda) — não há caminho de produção " +
+    "escrevendo nesta coluna hoje. Sai no mesmo commit que acrescentar " +
+    "retail_sales à cascata (fn_lgpd_cascade_redact_contact + apêndice do " +
+    "baseline), planejado para a Fase 2 (POS, IMPLEMENTATION_PLAN.md), quando a " +
+    "coluna passa a ser escrita de verdade pela aplicação.",
 };
 
 /** Tabelas no escopo: FK para contacts E coluna de conteúdo pessoal. */

@@ -1,8 +1,9 @@
 import { createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   parseMetaWebhook,
   verificationChallenge,
+  verifyDatafySignature,
   verifyMetaSignature,
 } from "@/lib/channels/meta/webhook";
 
@@ -41,6 +42,84 @@ describe("verifyMetaSignature", () => {
   it("sem header e sem segredo = false (fail-closed)", () => {
     expect(verifyMetaSignature(body, null, SECRET)).toBe(false);
     expect(verifyMetaSignature(body, sign(body), "")).toBe(false);
+  });
+});
+
+describe("verifyDatafySignature", () => {
+  const DATAFY_SECRET = "whsec_teste_de_segredo_por_numero";
+  const body = JSON.stringify({ object: "whatsapp_business_account" });
+  const AGORA = new Date("2026-09-15T12:00:00Z");
+  const timestamp = String(Math.floor(AGORA.getTime() / 1000));
+
+  const assinar = (ts: string, corpo: string, secret = DATAFY_SECRET) =>
+    `sha256=${createHmac("sha256", secret).update(`${ts}.${corpo}`, "utf8").digest("hex")}`;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(AGORA);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("aceita a assinatura correta dentro da janela de replay", () => {
+    expect(verifyDatafySignature(body, timestamp, assinar(timestamp, body), DATAFY_SECRET)).toBe(true);
+  });
+
+  it("recusa segredo errado", () => {
+    expect(verifyDatafySignature(body, timestamp, assinar(timestamp, body), "whsec_outro_numero")).toBe(
+      false,
+    );
+  });
+
+  it("recusa corpo adulterado — o material assinado é `timestamp.body`, e o corpo mudou", () => {
+    expect(
+      verifyDatafySignature(body + " ", timestamp, assinar(timestamp, body), DATAFY_SECRET),
+    ).toBe(false);
+  });
+
+  it("recusa timestamp fora da janela de 300s — é A RAZÃO de o campo existir (replay protection que a Meta não tem)", () => {
+    const velho = String(Math.floor(AGORA.getTime() / 1000) - 301);
+    expect(verifyDatafySignature(body, velho, assinar(velho, body), DATAFY_SECRET)).toBe(false);
+  });
+
+  it("aceita timestamp exatamente na borda da janela (300s)", () => {
+    const borda = String(Math.floor(AGORA.getTime() / 1000) - 300);
+    expect(verifyDatafySignature(body, borda, assinar(borda, body), DATAFY_SECRET)).toBe(true);
+  });
+
+  it("recusa timestamp do futuro fora da janela — não só o passado", () => {
+    const futuro = String(Math.floor(AGORA.getTime() / 1000) + 301);
+    expect(verifyDatafySignature(body, futuro, assinar(futuro, body), DATAFY_SECRET)).toBe(false);
+  });
+
+  it("recusa timestamp trocado sem recalcular a assinatura — ele É parte do HMAC, não decoração", () => {
+    // A assinatura foi calculada com `timestamp`, mas o header diz outro valor:
+    // o HMAC não bate porque o material assinado (`${ts}.${body}`) mudou.
+    const outroTimestamp = String(Number(timestamp) - 10);
+    expect(
+      verifyDatafySignature(body, outroTimestamp, assinar(timestamp, body), DATAFY_SECRET),
+    ).toBe(false);
+  });
+
+  it("recusa timestamp ausente ou não-numérico, header ausente e segredo ausente (fail-closed)", () => {
+    expect(verifyDatafySignature(body, null, assinar(timestamp, body), DATAFY_SECRET)).toBe(false);
+    expect(
+      verifyDatafySignature(body, "nao-e-numero", assinar(timestamp, body), DATAFY_SECRET),
+    ).toBe(false);
+    expect(verifyDatafySignature(body, timestamp, null, DATAFY_SECRET)).toBe(false);
+    expect(verifyDatafySignature(body, timestamp, assinar(timestamp, body), "")).toBe(false);
+  });
+
+  it("recusa quando o prefixo não é sha256", () => {
+    const hex = createHmac("sha256", DATAFY_SECRET).update(`${timestamp}.${body}`, "utf8").digest("hex");
+    expect(verifyDatafySignature(body, timestamp, `sha512=${hex}`, DATAFY_SECRET)).toBe(false);
+  });
+
+  it("assinatura de tamanho errado devolve false, não estoura (mesmo guard de verifyMetaSignature)", () => {
+    expect(() => verifyDatafySignature(body, timestamp, "sha256=abcd", DATAFY_SECRET)).not.toThrow();
+    expect(verifyDatafySignature(body, timestamp, "sha256=abcd", DATAFY_SECRET)).toBe(false);
   });
 });
 

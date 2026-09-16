@@ -14,6 +14,15 @@
  * `hub.challenge` (GET) faz parte do protocolo: a Meta só passa a entregar eventos
  * depois que o endpoint devolve o desafio **em texto puro** — não JSON, não
  * `{data:...}`. Envelopar quebra a verificação com uma mensagem inútil no dashboard.
+ *
+ * ─── Um TERCEIRO esquema, para o transporte Datafy ──────────────────────────
+ *
+ * `verifyDatafySignature`, mais abaixo, verifica a entrega de sessões conectadas
+ * via Datafy (BSP homologado pela Meta, `https://app.datafyapi.com.br/docs`) — não
+ * é uma variação de `verifyMetaSignature`, é outro esquema: assina
+ * `` `${timestamp}.${rawBody}` `` (não o corpo sozinho), o segredo é POR NÚMERO
+ * (não por app) e o header carrega timestamp para checar replay — nada disso o
+ * esquema da Meta tem. Documentado no próprio `verifyDatafySignature`.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -65,6 +74,55 @@ export function verifyMetaSignature(
   const expected = createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
   // timingSafeEqual estoura se os tamanhos diferem — comparar antes evita
   // transformar assinatura malformada em exceção 500.
+  if (received.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(received, "hex"), Buffer.from(expected, "hex"));
+}
+
+/**
+ * Janela de tolerância do `x-datafy-timestamp` — replay protection que o
+ * esquema da Meta não tem (ela assina só o corpo, sem carimbo de tempo).
+ * 300s (5 min) é generoso o bastante para clock skew normal entre a Datafy e
+ * o servidor, e curto o bastante para tornar um payload capturado inútil
+ * fora dessa janela.
+ */
+const JANELA_DE_REPLAY_DATAFY_SEGUNDOS = 300;
+
+/**
+ * Assinatura da Datafy: `sha256=<hex>` no header `x-datafy-signature-256`,
+ * MAS sobre `` `${timestamp}.${rawBody}` `` — não o corpo sozinho como a Meta.
+ * O timestamp vem em `x-datafy-timestamp` (epoch em segundos) e É PARTE do
+ * material assinado, então trocá-lo sem recalcular o HMAC já reprova aqui;
+ * o segundo guard (janela de 300s) existe para além disso: recusar um
+ * payload capturado e REENVIADO dentro do prazo de validade do próprio HMAC.
+ *
+ * O segredo é o `whsec_...` que a Datafy gera POR NÚMERO (não o App Secret
+ * da Meta, que é por app) — quem chama resolve QUAL segredo passar; esta
+ * função não sabe de sessão nem de banco, só verifica.
+ *
+ * Mesmo padrão fail-closed de `verifyMetaSignature`: falta de qualquer uma
+ * das três entradas (timestamp, header, segredo) é `false`, nunca exceção —
+ * e o guard de tamanho antes do `timingSafeEqual` evita que uma assinatura
+ * malformada vire 500 (a Datafy, como a Meta, reentrega o que não recebe 2xx).
+ */
+export function verifyDatafySignature(
+  rawBody: string,
+  timestamp: string | null,
+  signatureHeader: string | null,
+  secret: string,
+): boolean {
+  if (!signatureHeader || !secret || !timestamp) return false;
+
+  const carimbo = Number(timestamp);
+  if (!Number.isFinite(carimbo)) return false;
+  const agoraEmSegundos = Math.floor(Date.now() / 1000);
+  if (Math.abs(agoraEmSegundos - carimbo) > JANELA_DE_REPLAY_DATAFY_SEGUNDOS) return false;
+
+  const [algo, received] = signatureHeader.split("=");
+  if (algo !== "sha256" || !received) return false;
+
+  const expected = createHmac("sha256", secret)
+    .update(`${timestamp}.${rawBody}`, "utf8")
+    .digest("hex");
   if (received.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(received, "hex"), Buffer.from(expected, "hex"));
 }

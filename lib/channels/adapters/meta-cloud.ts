@@ -19,7 +19,7 @@
  *    da bolha de voz. E a Meta **não converte** — quem manda mp3 com `voice:true` erra;
  *    o outro canal converte por nós, este não.
  */
-import { graphVersion } from "@/lib/graph-version";
+import { graphBaseUrl, graphVersion } from "@/lib/graph-version";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { metaContactsPayload } from "@/lib/channels/meta/contact-card";
 import { resolveMetaCreds } from "../meta/credentials";
@@ -151,7 +151,7 @@ export const metaCloudAdapter: ChannelAdapter = {
     const version = graphVersion();
     try {
       const res = await fetch(
-        `https://graph.facebook.com/${version}/${input.sessionRef}?fields=display_phone_number,quality_rating`,
+        `${graphBaseUrl()}/${version}/${input.sessionRef}?fields=display_phone_number,quality_rating`,
         {
           headers: { Authorization: `Bearer ${creds.token}` },
           // Teto de espera: um endpoint que pendura a conexão penduraria o cron
@@ -205,7 +205,7 @@ export const metaCloudAdapter: ChannelAdapter = {
 
     const headers = { Authorization: `Bearer ${creds.token}` };
     const lookup = await fetch(
-      `https://graph.facebook.com/${creds.graphVersion}/${encodeURIComponent(mediaId)}`,
+      `${graphBaseUrl()}/${creds.graphVersion}/${encodeURIComponent(mediaId)}`,
       { headers, signal: AbortSignal.timeout(15_000) },
     );
     const metadata = (await lookup.json().catch(() => ({}))) as {
@@ -288,7 +288,7 @@ export const metaCloudAdapter: ChannelAdapter = {
 
     await envelope.beforeSend?.();
     const res = await fetch(
-      `https://graph.facebook.com/${creds.graphVersion}/${creds.phoneNumberId}/messages`,
+      `${graphBaseUrl()}/${creds.graphVersion}/${creds.phoneNumberId}/messages`,
       {
         method: "POST",
         headers: {
