@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vitrine AI — Apresentação</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0b0d10;
+    --bg-soft: #12151a;
+    --card: #161a20;
+    --card-border: #24292f;
+    --text: #f2f4f7;
+    --text-dim: #9aa4b2;
+    --text-dimmer: #6b7684;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59,130,246,0.12);
+    --accent2: #34d399;
+    --accent2-soft: rgba(52,211,153,0.12);
+    --warn: #f5a524;
+  }
+  *{ box-sizing: border-box; margin:0; padding:0; }
+  html,body{ background: var(--bg); }
+  body{
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--text);
+  }
+  h1,h2,h3,.display{ font-family: 'Manrope', 'Inter', sans-serif; }
+
+  @page{ size: 297mm 167mm; margin: 0; }
+
+  /*
+    Duas identidades pro mesmo .slide:
+    - Impressão/PDF (@media print): tamanho físico exato em mm, um por página —
+      é o que o Chrome headless usa pra gerar o PDF, sem transform nenhum.
+    - Tela (@media screen): .slide nasce num tamanho fixo em px (a "resolução
+      nativa" do design, 1123×631 ≈ a mesma proporção 297:167) e o
+      .slide-frame ao redor é 100% fluido — a única coisa que muda com a
+      largura da tela é a ESCALA aplicada via transform (calculada no JS no
+      fim do arquivo). Isso evita reescrever cada grid/fonte em unidade
+      relativa: o slide inteiro encolhe/cresce como uma imagem, proporcional,
+      sem faixa preta sobrando do lado nem quebra de layout no celular.
+  */
+  .slide-frame{
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    aspect-ratio: 1123 / 631;
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .slide{
+    width: 1123px;
+    height: 631px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: top left;
+    overflow: hidden;
+    padding: 14mm 16mm;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(circle at 88% -10%, rgba(59,130,246,0.16), transparent 45%),
+      radial-gradient(circle at -5% 110%, rgba(52,211,153,0.10), transparent 40%),
+      var(--bg);
+  }
+
+  @media print{
+    .slide-frame{ width: auto; max-width: none; aspect-ratio: unset; overflow: visible; margin: 0; page-break-after: always; }
+    .slide-frame:last-child{ page-break-after: auto; }
+    .slide{ position: static; width: 297mm; height: 167mm; transform: none !important; }
+  }
+
+  .kicker{
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 6mm;
+  }
+  .kicker.green{ color: var(--accent2); }
+
+  .pagenum{
+    position:absolute; bottom: 8mm; right: 16mm;
+    font-size: 9px; color: var(--text-dimmer); letter-spacing: 0.05em;
+  }
+  .brandmark{
+    position:absolute; bottom: 8mm; left: 16mm;
+    font-size: 9px; color: var(--text-dimmer); letter-spacing: 0.05em;
+    display:flex; align-items:center; gap:6px;
+  }
+  .brandmark .dot{ width:5px; height:5px; border-radius:50%; background:var(--accent); }
+
+  /* ---------- COVER ---------- */
+  .cover{ justify-content: center; }
+  .cover .badge{
+    display:inline-flex; align-items:center; gap:8px;
+    width: fit-content;
+    background: var(--accent-soft);
+    border: 1px solid rgba(59,130,246,0.35);
+    color: var(--accent);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 11px; font-weight:600; letter-spacing:0.03em;
+    margin-bottom: 10mm;
+  }
+  .cover h1{
+    font-size: 58px; font-weight: 800; letter-spacing: -0.02em;
+    line-height: 1.02;
+    max-width: 210mm;
+  }
+  .cover h1 span{ color: var(--accent); }
+  .cover p.sub{
+    margin-top: 7mm;
+    font-size: 18px; color: var(--text-dim); font-weight: 500;
+    max-width: 165mm; line-height: 1.5;
+  }
+  .cover .meta{
+    margin-top: 16mm;
+    display:flex; gap: 14mm;
+  }
+  .cover .meta .item{ font-size:11.5px; color:var(--text-dimmer); }
+  .cover .meta .item b{ color: var(--text); display:block; font-size:13px; margin-bottom:2px; font-weight:600; }
+
+  /* ---------- GENERIC HEADER ---------- */
+  .headline{ font-size: 34px; font-weight: 800; letter-spacing: -0.01em; max-width: 200mm; line-height:1.15; }
+  .headline span{ color: var(--accent); }
+  .headline.green span{ color: var(--accent2); }
+  .lede{ margin-top: 5mm; font-size: 14.5px; color: var(--text-dim); max-width: 175mm; line-height:1.6; font-weight:500; }
+
+  /* ---------- PROBLEM GRID ---------- */
+  .grid{ margin-top: 9mm; display:grid; gap: 6mm; flex:1; }
+  .grid.cols2{ grid-template-columns: 1fr 1fr; }
+  .grid.cols3{ grid-template-columns: 1fr 1fr 1fr; }
+  .grid.cols4{ grid-template-columns: repeat(4,1fr); }
+
+  .pain{
+    background: var(--card); border:1px solid var(--card-border); border-radius:14px;
+    padding: 9mm 8mm; display:flex; flex-direction:column; gap:4mm;
+  }
+  .pain .num{
+    width:30px; height:30px; border-radius:9px; background: rgba(245,165,36,0.12);
+    color: var(--warn); display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:13px; font-family:'Manrope';
+  }
+  .pain p{ font-size: 13.5px; line-height:1.55; color: var(--text-dim); font-weight:500; }
+  .pain p b{ color: var(--text); font-weight:700; }
+
+  /* ---------- QUOTE / CHAT EXAMPLE ---------- */
+  .chat{
+    margin-top: 8mm; background: var(--card); border:1px solid var(--card-border);
+    border-radius:18px; padding: 9mm 10mm; max-width: 155mm;
+  }
+  .bubble{ max-width: 82%; padding: 8px 14px; border-radius:14px; font-size:13.5px; line-height:1.5; margin-bottom:6mm; font-weight:500; }
+  .bubble.customer{ background:#1f242c; color:var(--text); border-bottom-left-radius:4px; }
+  .bubble.ai{ background: var(--accent); color:#08101f; border-bottom-right-radius:4px; margin-left:auto; font-weight:600; }
+  .chat .caption{ font-size:11.5px; color: var(--text-dimmer); margin-top:2mm; font-style:italic; }
+
+  /* ---------- FLOW DIAGRAM ---------- */
+  .flow{ margin-top: 12mm; display:flex; align-items:stretch; gap:0; flex:1; }
+  .flow-step{
+    flex:1; background: var(--card); border:1px solid var(--card-border); border-radius:14px;
+    padding: 8mm 6mm; display:flex; flex-direction:column; gap:4mm; position:relative;
+  }
+  .flow-step .icon{
+    width:34px; height:34px; border-radius:10px; background: var(--accent-soft);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .flow-step .icon svg{ width:18px; height:18px; stroke: var(--accent); }
+  .flow-step h3{ font-size:13.5px; font-weight:700; }
+  .flow-step p{ font-size:11.5px; color:var(--text-dim); line-height:1.5; font-weight:500; }
+  .flow-arrow{
+    width: 20mm; display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .flow-arrow svg{ width:16px; height:16px; stroke: var(--text-dimmer); }
+
+  /* ---------- PILLAR CARDS (fase 1 overview) ---------- */
+  .pillars{ margin-top:10mm; display:grid; grid-template-columns:repeat(3,1fr); gap:7mm; flex:1; }
+  .pillar{
+    background: linear-gradient(180deg, var(--card), var(--bg-soft));
+    border:1px solid var(--card-border); border-radius:18px; padding:10mm 8mm;
+    display:flex; flex-direction:column; gap:5mm;
+  }
+  .pillar .tag{ font-size:10px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent2); }
+  .pillar h3{ font-size:17px; font-weight:800; line-height:1.25; }
+  .pillar p{ font-size:12.5px; color:var(--text-dim); line-height:1.55; font-weight:500; }
+  .pillar .index{ font-size:34px; font-weight:800; color: var(--card-border); font-family:'Manrope'; line-height:1; }
+
+  /* ---------- DETAIL SLIDE (2 col: text list + side panel) ---------- */
+  .detail{ margin-top:10mm; display:grid; grid-template-columns: 1.15fr 0.85fr; gap:12mm; flex:1; }
+  .feature-list{ display:flex; flex-direction:column; gap:6mm; }
+  .feature{ display:flex; gap:5mm; }
+  .feature .check{
+    width:22px; height:22px; border-radius:7px; background: var(--accent2-soft); flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; margin-top:2px;
+  }
+  .feature .check svg{ width:12px; height:12px; stroke: var(--accent2); }
+  .feature h4{ font-size:14px; font-weight:700; margin-bottom:1.5mm; }
+  .feature p{ font-size:12.5px; color:var(--text-dim); line-height:1.55; font-weight:500; }
+
+  .sidepanel{
+    background: var(--card); border:1px solid var(--card-border); border-radius:16px;
+    padding:9mm; display:flex; flex-direction:column; justify-content:center; gap:5mm;
+  }
+  .sidepanel .stat{ display:flex; flex-direction:column; gap:1mm; }
+  .sidepanel .stat .value{ font-size:26px; font-weight:800; font-family:'Manrope'; color:var(--accent); }
+  .sidepanel .stat .label{ font-size:11px; color:var(--text-dimmer); font-weight:600; }
+  .sidepanel hr{ border:none; border-top:1px solid var(--card-border); margin:1mm 0; }
+
+  /* ---------- FASE 2 CARDS ---------- */
+  .roadmap{ margin-top:10mm; display:grid; grid-template-columns:repeat(4,1fr); gap:6mm; flex:1; }
+  .road-card{
+    border:1px dashed var(--card-border); border-radius:14px; padding:8mm 6mm;
+    display:flex; flex-direction:column; gap:4mm; background: rgba(255,255,255,0.015);
+  }
+  .road-card .icon{ width:30px; height:30px; border-radius:9px; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; }
+  .road-card .icon svg{ width:16px; height:16px; stroke: var(--text-dim); }
+  .road-card h4{ font-size:13px; font-weight:700; }
+  .road-card p{ font-size:11px; color: var(--text-dimmer); line-height:1.5; font-weight:500; }
+
+  /* ---------- COMPARISON TABLE ---------- */
+  .compare{ margin-top:10mm; display:grid; grid-template-columns: repeat(3,1fr); gap:6mm; flex:1; }
+  .compare-col{ border-radius:16px; padding:8mm 7mm; display:flex; flex-direction:column; gap:5mm; }
+  .compare-col.bad{ background: rgba(245,165,36,0.06); border:1px solid rgba(245,165,36,0.25); }
+  .compare-col.neutral{ background: rgba(255,255,255,0.03); border:1px solid var(--card-border); }
+  .compare-col.good{ background: rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.35); }
+  .compare-col h4{ font-size:14.5px; font-weight:800; }
+  .compare-col.good h4{ color: var(--accent2); }
+  .compare-col ul{ list-style:none; display:flex; flex-direction:column; gap:3mm; }
+  .compare-col li{ font-size:12px; color: var(--text-dim); line-height:1.5; font-weight:500; padding-left:4mm; position:relative; }
+  .compare-col li::before{ content:'—'; position:absolute; left:0; color:var(--text-dimmer); }
+  .compare-col.good li::before{ content:'✓'; color:var(--accent2); }
+
+  /* ---------- SECURITY ---------- */
+  .sec-grid{ margin-top:10mm; display:grid; grid-template-columns:repeat(3,1fr); gap:7mm; flex:1; align-content:start; }
+  .sec-card{ background:var(--card); border:1px solid var(--card-border); border-radius:16px; padding:9mm 8mm; display:flex; flex-direction:column; gap:4mm; }
+  .sec-card .icon{ width:32px; height:32px; border-radius:9px; background:var(--accent-soft); display:flex; align-items:center; justify-content:center; }
+  .sec-card .icon svg{ width:17px; height:17px; stroke:var(--accent); }
+  .sec-card h4{ font-size:14px; font-weight:700; }
+  .sec-card p{ font-size:12px; color:var(--text-dim); line-height:1.55; font-weight:500; }
+
+  /* ---------- CLOSING ---------- */
+  .steps{ margin-top:11mm; display:flex; flex-direction:column; gap:6mm; flex:1; }
+  .step-row{ display:flex; align-items:center; gap:8mm; }
+  .step-row .n{
+    width:38px; height:38px; border-radius:50%; background:var(--accent); color:#08101f;
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:15px; font-family:'Manrope'; flex-shrink:0;
+  }
+  .step-row .tx h4{ font-size:15px; font-weight:700; margin-bottom:1mm; }
+  .step-row .tx p{ font-size:12.5px; color:var(--text-dim); font-weight:500; }
+  .cta-box{
+    margin-top:auto; background: linear-gradient(90deg, var(--accent-soft), transparent);
+    border:1px solid rgba(59,130,246,0.3); border-radius:16px; padding:9mm 10mm;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .cta-box h3{ font-size:19px; font-weight:800; }
+  .cta-box p{ font-size:12.5px; color:var(--text-dim); margin-top:1.5mm; font-weight:500; }
+
+  /*
+    Tela estreita — fica por ÚLTIMO na folha de estilo de propósito: empate de
+    especificidade (`.grid.cols4` aqui pesa igual ao `.grid.cols4` lá em cima)
+    se resolve por ORDEM NO ARQUIVO, e uma media query no meio do arquivo perde
+    pra uma regra sem media query definida depois dela. Por isso este bloco
+    já foi movido daqui de cima uma vez — ficar por último é o que garante que
+    ele vence de verdade, não só "parece que devia vencer".
+
+    E o motivo de existir: NÃO encolhe o slide inteiro (isso deixa o texto
+    minúsculo e obriga a pessoa a dar zoom pra ler). Em vez disso, cada seção
+    vira um bloco de leitura comum — largura 100%, altura livre, texto no
+    tamanho de verdade, grade de várias colunas virando uma coluna só. Leitura
+    contínua tipo página, não uma foto reduzida do slide. O JS no fim do
+    arquivo já para de aplicar `transform` nesta faixa de largura.
+  */
+  @media screen and (max-width: 780px){
+    .slide-frame{ aspect-ratio: unset; height: auto; overflow: visible; max-width: 100%; }
+    .slide-frame + .slide-frame{ border-top: 1px solid var(--card-border); }
+    .slide{
+      position: static; width: 100%; height: auto; min-height: 0;
+      transform: none !important;
+      padding: 30px 20px 34px;
+    }
+
+    .cover h1{ font-size: 30px; max-width: 100%; }
+    .cover p.sub{ font-size: 15px; max-width: 100%; }
+    .cover .meta{ flex-wrap: wrap; gap: 16px 28px; margin-top: 24px; }
+    .headline{ font-size: 23px; max-width: 100%; }
+    .lede{ font-size: 13.5px; max-width: 100%; }
+
+    .grid.cols2, .grid.cols3, .grid.cols4,
+    .pillars, .roadmap, .compare, .sec-grid, .detail{
+      grid-template-columns: 1fr;
+    }
+
+    .flow{ flex-direction: column; }
+    .flow-arrow{ width: auto; height: 26px; }
+    .flow-arrow svg{ transform: rotate(90deg); }
+
+    .cta-box{ flex-direction: column; align-items: flex-start; gap: 12px; }
+    .chat{ max-width: 100%; }
+    .pain, .road-card, .sec-card, .pillar{ padding: 20px 18px; }
+    .pagenum, .brandmark{ display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 1. CAPA -->
+<div class="slide-frame">
+<section class="slide cover">
+  <div class="badge">SISTEMA OPERACIONAL DE VENDAS COM IA</div>
+  <h1>O jeito novo de vender <span>iPhone</span>,<br>do WhatsApp ao estoque.</h1>
+  <p class="sub">Um sistema único que atende no WhatsApp, controla cada aparelho pelo IMEI e mostra
+  o que está acontecendo na loja em tempo real — com uma inteligência artificial que consulta os
+  dados reais do seu negócio antes de responder qualquer cliente.</p>
+  <div class="meta">
+    <div class="item"><b>Vitrine AI</b>Nome de trabalho do projeto</div>
+    <div class="item"><b>Apresentação para parceiros</b>Setembro de 2026</div>
+    <div class="item"><b>Confidencial</b>Uso interno e de parceiros convidados</div>
+  </div>
+</section>
+</div>
+
+<!-- 2. O PROBLEMA -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">O CENÁRIO HOJE</div>
+  <h2 class="headline">O dia a dia de quem vende iPhone tem <span>atrito demais</span></h2>
+  <p class="lede">Boa parte da venda se perde antes mesmo de chegar ao balcão — no tempo de resposta, na
+  falta de certeza sobre o estoque, ou porque ninguém anotou o que já foi conversado.</p>
+  <div class="grid cols4">
+    <div class="pain"><div class="num">1</div><p><b>Resposta lenta no WhatsApp.</b> O vendedor está ocupado, o cliente espera e compra em outro lugar.</p></div>
+    <div class="pain"><div class="num">2</div><p><b>Estoque incerto.</b> "Deixa eu confirmar e te aviso" — quando ninguém sabe o que tem de verdade na loja.</p></div>
+    <div class="pain"><div class="num">3</div><p><b>Histórico perdido.</b> Cada vendedor lembra do seu jeito; a conversa de ontem não ajuda a de hoje.</p></div>
+    <div class="pain"><div class="num">4</div><p><b>Sem visão do negócio.</b> Vendas, margem e aparelhos parados só aparecem quando alguém para pra olhar.</p></div>
+  </div>
+</section>
+</div>
+
+<!-- 3. A SOLUÇÃO -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker green">A SOLUÇÃO</div>
+  <h2 class="headline">Um sistema que <span style="color:var(--accent2)">participa da venda</span> — não só registra ela</h2>
+  <p class="lede">Não é um chatbot solto, nem uma planilha de estoque, nem mais um CRM genérico. É a união das três
+  coisas, operando sobre o mesmo dado real da sua loja.</p>
+  <div class="chat">
+    <div class="bubble customer">Tem iPhone 15 Pro 256GB?</div>
+    <div class="bubble ai">Temos 2 unidades — uma titânio natural por R$ 5.499 e uma azul por R$ 5.599. Quer que eu separe alguma pra você?</div>
+    <div class="caption">Resposta em segundos, com o estoque real da loja — nunca um número inventado.</div>
+  </div>
+</section>
+</div>
+
+<!-- 4. COMO FUNCIONA -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">COMO FUNCIONA</div>
+  <h2 class="headline">Da mensagem no WhatsApp até a venda fechada</h2>
+  <p class="lede">Tudo conectado — o cliente nunca percebe a costura, só a resposta certa e rápida.</p>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg></div>
+      <h3>Cliente escreve</h3>
+      <p>Pergunta sobre um modelo, preço ou troca — a qualquer hora do dia.</p>
+    </div>
+    <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    <div class="flow-step">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg></div>
+      <h3>IA consulta a loja</h3>
+      <p>Verifica estoque, preço e histórico do cliente antes de responder qualquer coisa.</p>
+    </div>
+    <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    <div class="flow-step">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <h3>Responde e organiza</h3>
+      <p>Dá a resposta certa e já registra o interesse do cliente no funil de vendas.</p>
+    </div>
+    <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    <div class="flow-step">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H7a4 4 0 00-4 4v2M11 3a4 4 0 110 8 4 4 0 010-8z"/></svg></div>
+      <h3>Vendedor assume</h3>
+      <p>Quando o cliente decide comprar, negociar ou precisa de alguém — sem perder o contexto.</p>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- 5. FASE 1 OVERVIEW -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">O PLANO</div>
+  <h2 class="headline">Fase 1 — o suficiente pra loja rodar <span>de ponta a ponta</span></h2>
+  <p class="lede">Três pilares que já entram juntos: controlar o estoque, atender pelo WhatsApp com IA, e enxergar o negócio em tempo real.</p>
+  <div class="pillars">
+    <div class="pillar"><div class="index">01</div><div class="tag">Estoque</div><h3>Cada iPhone com identidade própria</h3><p>Controle por IMEI, condição e custo — nunca mais um aparelho "sumido" sem explicação.</p></div>
+    <div class="pillar"><div class="index">02</div><div class="tag">Atendimento</div><h3>IA que atende no WhatsApp com dado real</h3><p>Responde estoque, preço e dúvidas comuns — e chama um vendedor quando é hora de negociar.</p></div>
+    <div class="pillar"><div class="index">03</div><div class="tag">Gestão</div><h3>Painel e IA para o dono</h3><p>Vendas, margem e o que está parado — perguntando em linguagem simples, na hora que precisar.</p></div>
+  </div>
+</section>
+</div>
+
+<!-- 6. FASE 1 - ESTOQUE -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">FASE 1 · ESTOQUE</div>
+  <h2 class="headline">Cada aparelho, rastreado <span>individualmente</span></h2>
+  <div class="detail">
+    <div class="feature-list">
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>Cadastro por IMEI</h4><p>Condição, saúde da bateria, custo e preço próprios de cada unidade — não um número genérico de "quantidade".</p></div></div>
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>Recebimento de mercadoria simples</h4><p>Cadastra o fornecedor e a compra, e cada aparelho vira uma unidade própria no estoque, pronta pra inspeção.</p></div></div>
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>Toda movimentação fica registrada</h4><p>Quem mudou o status, quando e por quê — a pergunta "por que o estoque diz isso" sempre tem resposta.</p></div></div>
+    </div>
+    <div class="sidepanel">
+      <div class="stat"><div class="value">100%</div><div class="label">DOS APARELHOS COM HISTÓRICO COMPLETO</div></div>
+      <hr>
+      <div class="stat"><div class="value">0</div><div class="label">PLANILHAS PARALELAS PRA MANTER</div></div>
+      <hr>
+      <div class="stat"><div class="value">1 clique</div><div class="label">PRA SABER O QUE ESTÁ PARADO HÁ SEMANAS</div></div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- 7. FASE 1 - IA ATENDIMENTO -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">FASE 1 · ATENDIMENTO</div>
+  <h2 class="headline">Uma IA que <span>nunca inventa</span> estoque nem preço</h2>
+  <div class="detail">
+    <div class="feature-list">
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>Sempre consulta o dado real primeiro</h4><p>Antes de responder, verifica o estoque e o preço de verdade — se não tem certeza, avisa em vez de chutar.</p></div></div>
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>Sabe a hora de chamar um humano</h4><p>Negociação de preço, reclamação ou pergunta fora do script — a conversa passa pro vendedor com o contexto inteiro.</p></div></div>
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>Atende fora do horário comercial</h4><p>O cliente que manda mensagem às 23h recebe resposta na hora — não no dia seguinte, quando já comprou em outro lugar.</p></div></div>
+    </div>
+    <div class="sidepanel">
+      <div class="stat"><div class="value">24/7</div><div class="label">PRIMEIRA RESPOSTA, TODOS OS DIAS</div></div>
+      <hr>
+      <div class="stat"><div class="value">Real</div><div class="label">SÓ RESPONDE COM DADO CONFERIDO NO ESTOQUE</div></div>
+      <hr>
+      <div class="stat"><div class="value">→ Time</div><div class="label">PASSA PRO VENDEDOR NO MOMENTO CERTO</div></div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- 8. FASE 1 - ANALYTICS -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">FASE 1 · GESTÃO</div>
+  <h2 class="headline">As perguntas de todo dia, <span>respondidas na hora</span></h2>
+  <div class="detail">
+    <div class="feature-list">
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>"Quanto vendemos hoje?"</h4><p>Faturamento, número de vendas e ticket médio — sem esperar o fim do mês pra saber como foi.</p></div></div>
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>"Qual aparelho está parado?"</h4><p>O painel aponta o que não sai há semanas — antes que vire prejuízo esquecido na prateleira.</p></div></div>
+      <div class="feature"><div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div><div><h4>"Quem conversou e não comprou?"</h4><p>A base do assistente do dono, que só cresce a partir daqui — perguntar em linguagem simples e receber a resposta certa.</p></div></div>
+    </div>
+    <div class="sidepanel">
+      <div class="stat"><div class="value">Hoje</div><div class="label">VENDAS, MARGEM E CONVERSÃO EM TEMPO REAL</div></div>
+      <hr>
+      <div class="stat"><div class="value">IA vs. humano</div><div class="label">QUANTO CADA UM ESTÁ VENDENDO</div></div>
+      <hr>
+      <div class="stat"><div class="value">1º passo</div><div class="label">DO ASSISTENTE COMPLETO DA FASE 2</div></div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- 9. FASE 2 -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">O QUE VEM DEPOIS</div>
+  <h2 class="headline">Fase 2 — expansão sobre a <span>mesma base</span></h2>
+  <p class="lede">Depois que a Fase 1 estiver validada na operação real de uma loja, sem retrabalho — porque a estrutura já nasce pronta pra isso.</p>
+  <div class="roadmap">
+    <div class="road-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M17 1l4 4-4 4M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></div><h4>Avaliação de usados</h4><p>Trade-in com estimativa pela IA e confirmação da loja, tudo dentro da mesma conversa.</p></div>
+    <div class="road-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></div><h4>Assistência técnica</h4><p>Ordens de reparo com diagnóstico, orçamento e acompanhamento pelo cliente.</p></div>
+    <div class="road-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h4>Garantia</h4><p>Histórico de garantia por aparelho, ligado direto à venda e ao cliente.</p></div>
+    <div class="road-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM12 8v4l3 2"/></svg></div><h4>Assistente completo do dono</h4><p>Relatórios automáticos e recomendações — o que priorizar, quem chamar, o que comprar.</p></div>
+  </div>
+</section>
+</div>
+
+<!-- 10. DIFERENCIAIS -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">POR QUE É DIFERENTE</div>
+  <h2 class="headline">Não é <span>chatbot</span>, não é <span>ERP genérico</span></h2>
+  <p class="lede">O mercado tem os dois separados. O diferencial é ter as duas coisas operando sobre o mesmo dado, sempre atualizado.</p>
+  <div class="compare">
+    <div class="compare-col bad">
+      <h4>Chatbot solto</h4>
+      <ul><li>Não conhece o estoque real da loja</li><li>Promete o que não pode cumprir</li><li>Não sabe a hora de chamar um humano</li></ul>
+    </div>
+    <div class="compare-col neutral">
+      <h4>ERP / planilha genérica</h4>
+      <ul><li>Controla estoque, mas não atende ninguém</li><li>Depende de alguém copiar dado pro WhatsApp</li><li>Não tem contexto da conversa com o cliente</li></ul>
+    </div>
+    <div class="compare-col good">
+      <h4>Vitrine AI</h4>
+      <ul><li>Atende, consulta e vende com o mesmo dado</li><li>Nunca inventa estoque ou preço</li><li>Passa pro vendedor no momento certo</li></ul>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- 11. SEGURANÇA -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">CONFIANÇA</div>
+  <h2 class="headline">Seus dados são <span>seus</span></h2>
+  <p class="lede">A loja é dona da própria operação — não um sistema que fica com os dados presos em outro lugar.</p>
+  <div class="sec-grid">
+    <div class="sec-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div><h4>Cada loja isolada</h4><p>Os dados de uma loja nunca se misturam com os de outra — arquitetura pensada pra isso desde o início.</p></div>
+    <div class="sec-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 2L3 7v6c0 5 4 9 9 9s9-4 9-9V7l-9-5z"/></svg></div><h4>Pode rodar no seu servidor</h4><p>Opção de instalação própria (self-host) — sem depender de mensalidade nem de terceiro guardando os dados da sua loja.</p></div>
+    <div class="sec-card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M9 12l2 2 4-4M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z"/></svg></div><h4>LGPD desde o dia um</h4><p>Consentimento, anonimização e exclusão de dados de cliente já fazem parte do desenho — não são um extra depois.</p></div>
+  </div>
+</section>
+</div>
+
+<!-- 12. CLOSING -->
+<div class="slide-frame">
+<section class="slide">
+  <div class="kicker">PRÓXIMOS PASSOS</div>
+  <h2 class="headline">Como <span>começamos</span></h2>
+  <div class="steps">
+    <div class="step-row"><div class="n">1</div><div class="tx"><h4>Loja piloto usa a Fase 1 na operação real</h4><p>Estoque, atendimento no WhatsApp e painel de gestão, com aparelhos e clientes de verdade.</p></div></div>
+    <div class="step-row"><div class="n">2</div><div class="tx"><h4>Ajuste com base no uso real</h4><p>O que a loja precisar no dia a dia entra primeiro — sem construir o que ninguém vai usar ainda.</p></div></div>
+    <div class="step-row"><div class="n">3</div><div class="tx"><h4>Expansão pra Fase 2 quando fizer sentido</h4><p>Trade-in, assistência técnica e garantia, sobre a mesma base — sem recomeçar do zero.</p></div></div>
+  </div>
+  <div class="cta-box">
+    <div><h3>Vamos conversar sobre a sua loja?</h3><p>Mindiness Digital · mindnessdigital.com</p></div>
+  </div>
+</section>
+</div>
+
+<script>
+  // Escala cada .slide (tamanho fixo de 1123x631px) pra caber na largura real
+  // do .slide-frame — funciona bem em telas largas (desktop/tablet), onde o
+  // slide inteiro precisa caber de uma vez, como uma lâmina.
+  //
+  // Abaixo de 780px isto NÃO roda: encolher o slide inteiro pra caber num
+  // celular deixa o texto minúsculo, e a pessoa tem que dar zoom pra ler —
+  // pior que rolar uma página comum. Ali quem manda é o `@media screen and
+  // (max-width: 780px)` do CSS, que reflui pra coluna única em tamanho de
+  // leitura de verdade; aqui só limpamos o transform que a largura maior
+  // possa ter deixado, pra não sobrepor a regra do CSS depois de um resize.
+  //
+  // Print (PDF) também não roda isto: `@media print` já força
+  // transform:none e o tamanho físico em mm.
+  function ajustarSlides(){
+    var movel = window.innerWidth <= 780;
+    document.querySelectorAll('.slide-frame').forEach(function(frame){
+      var slide = frame.querySelector('.slide');
+      if (!slide) return;
+      if (movel){
+        slide.style.transform = '';
+        return;
+      }
+      var escala = frame.clientWidth / 1123;
+      slide.style.transform = 'scale(' + escala + ')';
+    });
+  }
+  window.addEventListener('resize', ajustarSlides);
+  window.addEventListener('load', ajustarSlides);
+  ajustarSlides();
+</script>
+</body>
+</html>
