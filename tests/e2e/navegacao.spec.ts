@@ -143,7 +143,12 @@ test.describe("navegação agrupada", () => {
 
     await sidebar(page).getByRole("link", { name: "Ver tudo em CRM" }).click();
     await page.waitForURL(/\/app\/crm$/);
-    await page.getByRole("link", { name: /Produtos/ }).click();
+    // Pelo href, e não por `/Produtos/`: o hub ganhou "Produtos (varejo)" ao
+    // lado (domínio de varejo móvel), e o padrão solto passou a casar DOIS
+    // links — o Playwright recusa clicar sem saber qual. O que este teste prova
+    // é que o catálogo plano continua alcançável, e o endereço diz isso sem
+    // depender do nome que o vizinho tem.
+    await page.locator('a[href="/app/products"]').click();
     await page.waitForURL(/\/app\/products/);
   });
 
