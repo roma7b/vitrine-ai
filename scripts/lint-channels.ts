@@ -56,6 +56,22 @@ const ALLOWED = [
   /^lib\/waha\//,
   // Saída de `supabase gen types`: os nomes são COLUNAS. Editar à mão é o defeito.
   /^lib\/database\.types\.ts$/,
+  // TERCEIRA FRONTEIRA, mesma razão de `lib/plataformas-de-anuncio/` acima: o
+  // próprio cabeçalho do arquivo descreve os DOIS eixos que ele serve —
+  // `graphVersion()`/`graphBaseUrl()` para `lib/channels/**` (que já é
+  // permitido) e `VERSAO_PADRAO_DA_GRAPH` para `lib/plataformas-de-anuncio/
+  // meta/**` (também já permitido). O número/host da Graph API mora aqui
+  // porque não pode morar duas vezes — é a fonte única que os dois eixos leem,
+  // e por isso não pode morar DENTRO de nenhum dos dois. `graph.facebook.com`
+  // aparece aqui uma vez, de propósito, para não aparecer em mais nenhum lugar
+  // (`tests/unit/versao-da-graph-num-lugar-so.test.ts` cobra exatamente isso).
+  //
+  // Sem esta linha, o invariante reprovava um arquivo NOVO desde o commit que
+  // o criou (2026-09-16) sem que ninguém notasse: `verify` vinha morrendo por
+  // falta de memória no passo de Typecheck, antes de chegar neste lint — o
+  // OOM mascarava o vermelho de verdade. Achado ao consertar a memória do
+  // `tsc` (PR separado), não pela varredura normal.
+  /^lib\/graph-version\.ts$/,
 ];
 
 /**
