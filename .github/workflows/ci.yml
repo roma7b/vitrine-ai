@@ -35,7 +35,20 @@ jobs:
         timeout-minutes: 5
 
       - name: Typecheck
+        # ⚠️ `tsc --noEmit -p tsconfig.typecheck.json` passou a estourar a
+        # memória padrão do V8 no runner `ubuntu-latest` — medido no job da
+        # própria `main` em 2026-09-16 (run 35156228638) e reproduzido de novo
+        # em 2026-09-28 (run 36469507347), os dois com a MESMA assinatura:
+        # `FATAL ERROR: Ineffective mark-compacts near heap limit ... heap
+        # out of memory`, o heap parando perto de 2 GB antes do V8 desistir.
+        # `ubuntu-latest` tem 7 GB de RAM; o default do V8 (~2 GB de old space
+        # em Node 22 sem a flag) é o que ficou pequeno demais para o projeto
+        # no tamanho de hoje, não o runner. `--max-old-space-size=6144` dá
+        # folga de ~3x sobre onde ele estourava, com margem para o SO e o
+        # processo do `tsc` em si.
         run: pnpm typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Lint
         run: pnpm lint
