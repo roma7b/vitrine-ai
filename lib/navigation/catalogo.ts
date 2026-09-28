@@ -224,6 +224,34 @@ export const NAV_CATALOG = [
     // Inbox e o funil, que continuam no menu.
   },
   {
+    // O domínio de varejo móvel (MOBILE_RETAIL_DOMAIN.md), Fase 1 — catálogo
+    // serializado por IMEI, distinto de `/app/products` (catalog_products,
+    // estoque plano). Mesma razão de existir e mesmo lugar: preparar o que a
+    // loja vende, não o dia a dia de atender.
+    href: "/app/retail/produtos",
+    label: "Produtos (varejo)",
+    description: "Modelos e SKUs do domínio serializado por IMEI — o que vira estoque com número de série.",
+    icon: "DeviceMobile",
+    group: "crm",
+    section: "Preparar a venda",
+  },
+  {
+    href: "/app/retail/estoque",
+    label: "Estoque (varejo)",
+    description: "Cada aparelho físico por IMEI, do recebimento até virar disponível para venda.",
+    icon: "Cube",
+    group: "crm",
+    section: "Preparar a venda",
+  },
+  {
+    href: "/app/retail/fornecedores",
+    label: "Fornecedores",
+    description: "De quem a loja compra o estoque serializado.",
+    icon: "Truck",
+    group: "crm",
+    section: "Preparar a venda",
+  },
+  {
     // A promessa que o comentário da Agenda fazia desde que ela nasceu. Aqui se
     // decide O QUE se pode marcar, quanto dura e quem atende — e é isto que a
     // tela de marcar e o agente de IA oferecem ao cliente.
