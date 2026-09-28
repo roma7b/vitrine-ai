@@ -53,10 +53,10 @@ function VariantesDoProduto({
 
   const carregar = React.useCallback(async () => {
     try {
-      const res = await apiClient.get<RetailVariant[]>(
+      const res = await apiClient.get<{ data: RetailVariant[] }>(
         `/api/v1/retail/products/${produtoId}/variants`,
       );
-      setVariantes(res);
+      setVariantes(res.data);
     } catch (e) {
       showApiError(e);
     }

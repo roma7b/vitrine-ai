@@ -95,10 +95,10 @@ export function RetailEstoqueClient({
     }
     setSalvando(true);
     try {
-      const compra = await apiClient.post<{ id: string }>("/api/v1/retail/purchases", {
+      const compra = await apiClient.post<{ data: { id: string } }>("/api/v1/retail/purchases", {
         ...(rascunho.supplier_id ? { supplier_id: rascunho.supplier_id } : {}),
       });
-      await apiClient.post(`/api/v1/retail/purchases/${compra.id}/receive`, {
+      await apiClient.post(`/api/v1/retail/purchases/${compra.data.id}/receive`, {
         items: [{ variant_id: rascunho.variant_id, quantity, unit_cost_cents }],
       });
       toast.success(t("{n} unidades recebidas").replace("{n}", String(quantity)));
