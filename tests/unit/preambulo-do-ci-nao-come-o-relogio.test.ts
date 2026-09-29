@@ -50,7 +50,18 @@ const ACTION = join(process.cwd(), ".github/actions/preparar-node/action.yml");
 const TETOS: Record<string, { minutos: number; razao: string }> = {
   "ci.yml::verify": {
     minutos: 15,
-    razao: "trabalho real medido: p90 594s, máximo 609s em 51 verdes — folga de ~4m45",
+    razao:
+      "medido quando ainda rodava os testes unitários: p90 594s, máximo 609s em 51 verdes. " +
+      "Sem eles (hoje no job `unit`) o job leva ~5 min; o teto não foi apertado de propósito, " +
+      "para esta mudança não ser também uma redução de folga",
+  },
+  "ci.yml::unit": {
+    minutos: 15,
+    razao:
+      "cada uma das 3 partes recebe um terço dos arquivos. Medido no PR #7: a suíte inteira " +
+      "num job passava de 12 min de testes (553 de 894 arquivos) e era cancelada. Estimado " +
+      "por extrapolação (não medido em terços): ~19 min no total, ~6-7 min por parte — " +
+      "folga de ~2x. Se a primeira rodada mostrar outro número, corrija esta linha",
   },
   "ci.yml::invariants": {
     minutos: 20,
