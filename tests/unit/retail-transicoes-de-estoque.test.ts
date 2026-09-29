@@ -1,10 +1,51 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  imeiValido,
   RETAIL_UNIT_STATUSES,
+  retailUnitPatchSchema,
   transicaoPermitida,
   type RetailUnitStatus,
 } from "@/lib/schemas/retail-inventory";
+
+describe("IMEI — a regra que a tela e a rota compartilham", () => {
+  it("aceita 15 números (o caso normal) e a faixa 14–17", () => {
+    expect(imeiValido("356938035643809")).toBe(true);
+    expect(imeiValido("35693803564380")).toBe(true);
+    expect(imeiValido("3569380356438091")).toBe(true);
+  });
+
+  it("recusa erro de digitação: letra, traço, espaço, curto e longo demais", () => {
+    expect(imeiValido("35693803564380A")).toBe(false);
+    expect(imeiValido("356938-03-564380")).toBe(false);
+    expect(imeiValido("3569 3803 5643 809")).toBe(false);
+    expect(imeiValido("1234567890123")).toBe(false);
+    expect(imeiValido("123456789012345678")).toBe(false);
+    expect(imeiValido("")).toBe(false);
+  });
+
+  it("a rota recusa o mesmo que a tela: o corpo com letra no IMEI não passa", () => {
+    expect(retailUnitPatchSchema.safeParse({ imei: "35693803564380A" }).success).toBe(false);
+    expect(retailUnitPatchSchema.safeParse({ imei: "356938035643809" }).success).toBe(true);
+  });
+
+  it("IMEI, condição, bateria e preço juntos, com a inspeção no mesmo pedido", () => {
+    const r = retailUnitPatchSchema.safeParse({
+      imei: "356938035643809",
+      condition: "SEMINOVO",
+      battery_health_pct: 89,
+      sale_price_cents: 549900,
+      status: "INSPECTION",
+      reason: "inspection_started",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("bateria fora de 0–100 é recusada", () => {
+    expect(retailUnitPatchSchema.safeParse({ battery_health_pct: 101 }).success).toBe(false);
+    expect(retailUnitPatchSchema.safeParse({ battery_health_pct: -1 }).success).toBe(false);
+  });
+});
 
 /**
  * A máquina de estados da unidade de estoque (MOBILE_RETAIL_DOMAIN.md §3) —

@@ -51,10 +51,32 @@ export function transicaoPermitida(de: RetailUnitStatus, para: RetailUnitStatus)
 
 const condicoesAbertas = z.string().trim().max(40);
 
+/**
+ * IMEI: só números, de 14 a 17. Um aparelho tem 15 (14 + dígito verificador);
+ * 16 é o IMEISV, e 14 aparece em etiqueta que perdeu o último dígito. A faixa é
+ * larga de propósito — a recusa aqui é de DIGITAÇÃO (letra, traço, espaço), não
+ * de validade: conferir o dígito verificador (Luhn) recusaria o IMEI de teste
+ * que a loja digita numa demonstração. A tela e a rota leem esta mesma regra.
+ */
+export const IMEI_REGEX = /^\d{14,17}$/;
+export function imeiValido(valor: string): boolean {
+  return IMEI_REGEX.test(valor);
+}
+
+/**
+ * Como a loja classifica o estado do aparelho. Vocabulário ABERTO no banco (sem
+ * CHECK — `retail_inventory_units.condition` é `text`), e é decisão de NEGÓCIO
+ * que cada loja vai querer refinar (a régua de "seminovo A/B/C" muda de dono
+ * para dono). Estes quatro são o ponto de partida; o rótulo na tela sai do
+ * código, e um valor gravado fora da lista continua aparecendo como veio.
+ */
+export const RETAIL_CONDITIONS = ["NOVO", "SEMINOVO", "USADO", "PARA_PECAS"] as const;
+export type RetailCondition = (typeof RETAIL_CONDITIONS)[number];
+
 export const retailUnitPatchSchema = z.object({
   status: z.enum(RETAIL_UNIT_STATUSES).optional(),
-  imei: z.string().trim().min(14).max(17).optional(),
-  imei2: z.string().trim().min(14).max(17).optional(),
+  imei: z.string().trim().regex(IMEI_REGEX, "o IMEI tem de 14 a 17 números").optional(),
+  imei2: z.string().trim().regex(IMEI_REGEX, "o IMEI 2 tem de 14 a 17 números").optional(),
   serial_number: z.string().trim().max(80).optional(),
   condition: condicoesAbertas.optional(),
   battery_health_pct: z.number().int().min(0).max(100).nullable().optional(),

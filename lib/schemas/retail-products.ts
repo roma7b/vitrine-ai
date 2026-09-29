@@ -54,6 +54,24 @@ const sku = z
   .max(60)
   .transform((v) => v.replace(/\s+/g, " "));
 
+/**
+ * Armazenamento digitado → GB inteiros, ou `null` se não der para ler.
+ *
+ * Quem cadastra escreve como está na caixa: `256`, `256GB`, `256 gb`, `1TB`.
+ * Antes a tela fazia `Number("256GB")`, que dá NaN; o JSON troca NaN por `null`
+ * e a rota respondia só "Dados inválidos." — sem dizer qual campo. TB vale
+ * 1024 GB (é como o iPhone de 1TB entra na coluna `storage_gb`, que é inteira).
+ * Fecha FECHADO: o que não se lê vira `null` e a tela diz o campo, em vez de
+ * gravar um número chutado.
+ */
+export function armazenamentoParaGb(entrada: string): number | null {
+  const m = /^\s*(\d+(?:[.,]\d+)?)\s*(gb|tb)?\s*$/i.exec(entrada);
+  if (!m) return null;
+  const valor = Number(m[1]!.replace(",", "."));
+  const gb = m[2]?.toLowerCase() === "tb" ? valor * 1024 : valor;
+  return Number.isInteger(gb) && gb >= 0 && gb <= 100_000 ? gb : null;
+}
+
 export const retailVariantCreateSchema = z.object({
   sku,
   storage_gb: z.number().int().min(0).optional(),

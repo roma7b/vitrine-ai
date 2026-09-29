@@ -10,7 +10,11 @@ import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
 import { formatCents } from "@/lib/money";
 import { precoParaCentavos } from "@/lib/schemas/produtos";
-import type { RetailProduct, RetailVariant } from "@/lib/schemas/retail-products";
+import {
+  armazenamentoParaGb,
+  type RetailProduct,
+  type RetailVariant,
+} from "@/lib/schemas/retail-products";
 
 interface Textos {
   titulo: string;
@@ -71,6 +75,14 @@ function VariantesDoProduto({
       toast.error(t("Informe o SKU."));
       return;
     }
+    let storage_gb: number | null = null;
+    if (rascunho.storage_gb.trim() !== "") {
+      storage_gb = armazenamentoParaGb(rascunho.storage_gb);
+      if (storage_gb === null) {
+        toast.error(t("Armazenamento inválido. Escreva assim: 256, 256GB ou 1TB"));
+        return;
+      }
+    }
     let list_price_cents: number | null = null;
     if (rascunho.list_price_cents.trim() !== "") {
       list_price_cents = precoParaCentavos(rascunho.list_price_cents);
@@ -83,7 +95,7 @@ function VariantesDoProduto({
     try {
       await apiClient.post(`/api/v1/retail/products/${produtoId}/variants`, {
         sku: rascunho.sku.trim(),
-        ...(rascunho.storage_gb.trim() ? { storage_gb: Number(rascunho.storage_gb) } : {}),
+        ...(storage_gb !== null ? { storage_gb } : {}),
         ...(rascunho.color.trim() ? { color: rascunho.color.trim() } : {}),
         list_price_cents,
       });
