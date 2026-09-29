@@ -553,6 +553,27 @@ export const AUDIT_ACTIONS = [
   // porque toda leitura de `admin/` é auditada neste repo — e porque aqui o
   // operador enxerga o agente publicado na organização de outra pessoa.
   "platform_admin.tenant_agents_viewed",
+
+  // Domínio de varejo móvel (MOBILE_RETAIL_DOMAIN.md), Fase 1 — catálogo
+  // serializado por IMEI. Distinto de `catalog_product.*` acima: aquele é o
+  // estoque plano sem variante nem unidade física.
+  "retail_product.created",
+  "retail_product.updated",
+  "retail_product.deleted",
+  "retail_variant.created",
+  "retail_variant.updated",
+  "retail_variant.deleted",
+  "retail_supplier.created",
+  "retail_supplier.updated",
+  "retail_supplier.deleted",
+  "retail_purchase.created",
+  // O gesto que faz nascer unidades serializadas — auditado além das N
+  // `inventory_unit.status_changed` de cada unidade recebida, pela mesma razão
+  // que `lead.imported` acompanha os N `lead.created`: "quem recebeu este lote,
+  // e quando" não se responde contando linha solta.
+  "retail_purchase.received",
+  "inventory_unit.status_changed",
+  "inventory_unit.updated",
 ] as const;
 
 /** Um código de auditoria. Derivado de `AUDIT_ACTIONS` — não redigite a lista. */

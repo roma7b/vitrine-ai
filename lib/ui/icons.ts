@@ -142,4 +142,9 @@ export {
   GoogleLogo,
   MapPin,
   ArrowsOutSimple,
+  // varejo móvel (MOBILE_RETAIL_DOMAIN.md, Fase 1): produto/SKU serializado,
+  // unidade física em estoque, fornecedor.
+  DeviceMobile,
+  Cube,
+  Truck,
 } from "@phosphor-icons/react/dist/ssr";
