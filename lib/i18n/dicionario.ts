@@ -8706,6 +8706,7 @@ export const DICIONARIO: Traducoes = {
   "Informe o IMEI antes de mandar para inspeção.": { es: "Indica el IMEI antes de enviar a inspección." },
   "Dados da unidade salvos": { es: "Datos de la unidad guardados" },
   "Salvar e mandar para inspeção": { es: "Guardar y enviar a inspección" },
+  "Armazenamento inválido. Escreva assim: 256, 256GB ou 1TB": { es: "Almacenamiento inválido. Escríbelo así: 256, 256GB o 1TB" },
 };
 
 /**
