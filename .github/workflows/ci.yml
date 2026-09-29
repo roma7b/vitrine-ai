@@ -65,9 +65,8 @@ jobs:
       - name: Role rank audit
         run: pnpm lint:role-rank
 
-      - name: Unit tests
-        run: pnpm test:unit
-
+      # Os testes unitários NÃO estão mais aqui: moram no job `unit`, abaixo,
+      # em 3 partes paralelas. Razão e medição no cabeçalho dele.
 
       # Scripts do kit self-host num repo git descartável (docker/crontab
       # dublados). É o único gate que exercita o update.sh — um erro aqui
@@ -80,6 +79,41 @@ jobs:
       # deixava o .env pela metade — passaram por todos os checks verdes. 15s.
       - name: Kit self-host (bash)
         run: pnpm test:shell
+
+  # A suíte unitária, em 3 partes que rodam ao mesmo tempo.
+  #
+  # POR QUE EXISTE: dentro do `verify` a suíte deixou de caber no teto de 15 min.
+  # Medido no job do PR #7 (run 36519533631): Typecheck 1m07 + Lint 1m14, e o
+  # passo `Unit tests` rodou de 04:01 a 04:13 — 12 min — e foi CANCELADO pelo
+  # teto com 553 dos 894 arquivos concluídos. O mesmo nos dois runs do PR #4.
+  # Ou seja: o `verify` nunca ficava verde, e nenhum teste unitário terminava
+  # no CI. Ela cresceu de ~390 arquivos (medição de agosto, que fundamentou o
+  # teto) para 894.
+  #
+  # O teto de 15 min FICA, como diz o cabeçalho de `preparar-node`: ele é o que
+  # denuncia a suíte crescendo, e subi-lo troca um vermelho honesto por um CI
+  # que engorda sem ninguém ver. O que muda é dividir o trabalho: `--shard`
+  # reparte os ARQUIVOS entre as 3 partes, e cada uma tem os seus 15 min.
+  #
+  # `fail-fast: false`: uma parte vermelha não pode esconder o resultado das
+  # outras duas — quem lê o CI quer a lista inteira do que falhou.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    name: unit (${{ matrix.shard }}/3)
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/preparar-node
+        # Mesmo teto do preâmbulo do `verify`, pela mesma razão.
+        timeout-minutes: 5
+
+      - name: Unit tests (parte ${{ matrix.shard }} de 3)
+        run: pnpm test:unit --shard=${{ matrix.shard }}/3
 
   # Gate de isolamento multi-tenant + invariantes de governança.
   # Job separado de propósito: roda em paralelo ao verify (não atrasa o feedback

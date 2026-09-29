@@ -129,7 +129,13 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
   // Desligar qualquer um destes faz o PR entrar sem ter sido testado.
   "ci.yml::verify": {
     condicao: null,
-    efeito: "Este é o check obrigatório `verify` (typecheck + lint + test:unit).",
+    efeito: "Este é o check obrigatório `verify` (typecheck + lint + auditorias + kit self-host).",
+  },
+  "ci.yml::unit": {
+    condicao: null,
+    efeito:
+      "Este é o check `unit`, a suíte unitária em 3 partes (`--shard`). Saiu do `verify`, que " +
+      "não a comportava em 15 min: desligá-lo faz o PR entrar sem nenhum teste unitário rodado.",
   },
   "ci.yml::invariants": {
     condicao: null,
